@@ -1,9 +1,14 @@
 import uuid
 import json
+from dotenv import load_dotenv
+
+# 讀取 .env
+load_dotenv()
+
 from src.orchestrator.pipeline import OrchestratorPipeline
 
 def main():
-    target_symbol = "2330.TW"
+    target_symbol = "2327.TW"
     task_id = str(uuid.uuid4())
     
     print(f"=== TWSE Multi-Agent 啟動 ===")
@@ -26,6 +31,16 @@ def main():
     print("\n=== 最終合成報告 (Synthesis Report) ===")
     final_report = pipeline.context.read("synthesis_report")
     print(json.dumps(final_report, indent=4, ensure_ascii=False))
+    
+    print("\n=== [Observability] 生成 Trace 視覺化報告 ===")
+    from src.trace import TraceVisualizer
+    visualizer = TraceVisualizer(task_id)
+    summary = visualizer.generate_human_summary()
+    mermaid = visualizer.generate_mermaid_sequence()
+    
+    print(summary)
+    print("\n--- Mermaid Sequence Diagram ---\n")
+    print(f"```mermaid\n{mermaid}\n```")
 
 if __name__ == "__main__":
     main()

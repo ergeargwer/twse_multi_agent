@@ -20,3 +20,6 @@ venv.bak/
 .idea/
 *.swp
 *.code-workspace
+
+# Local Trace Logs
+trace/
