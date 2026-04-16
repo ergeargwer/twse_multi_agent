@@ -53,36 +53,48 @@ graph TD
 ```text
 twse_multi_agent/
 ├── main.py                     # 專案啟動入口，觸發 Pipeline
+├── .env                        # [需手動建立] API 金鑰環境變數
 ├── src/
 │   ├── core/
 │   │   └── context.py          # 核心 SharedContext (Thread-Safe Memory)
 │   ├── orchestrator/
 │   │   └── pipeline.py         # 流程控制與 Thread 平行調度器
+│   ├── trace/                  # [新增] Observability & Visualization Layer
+│   │   ├── collector.py        # 負責蒐集各節點 JSON 的 Trace Collector
+│   │   ├── schemas.py          # 定義 Trace 資料結構 
+│   │   └── visualizer.py       # 轉換並產生 Mermaid 視覺化之工具
 │   └── agents/
-│       ├── ingestion.py        # 數據收集 Agent
+│       ├── ingestion.py        # 數據收集 Agent (即接 FinMind API)
 │       ├── fundamental.py      # 基本面分析 Agent
 │       ├── technical.py        # 技術面分析 Agent
 │       ├── institutional.py    # 法人籌碼分析 Agent
 │       ├── event.py            # 制度風險與 ETF 洗盤 Agent
-│       └── synthesizer.py      # 最終決策匯集與衝突判斷 Agent
+│       └── synthesizer.py      # 最終決策匯集與衝突判斷 Agent (介接 OpenRouter LLM)
 ```
 
 ---
 
 ## 🚀 快速開始 (Quick Start)
 
-目前的 MVP 版本使用**靜態模擬數據 (Mock Data)** 與**基礎關鍵字萃取**展示架構運作。您可以直接運行 `main.py` 來體驗端到端的完整運算流程。
+目前系統已完成 **真實 API (FinMind)**、**大型語言模型 (OpenRouter/Gemma-4-31B)** 與 **Trace 視覺化圖表**的全面串接。請依照以下步驟設定您的金鑰並運行。
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/yourusername/twse_multi_agent.git
 cd twse_multi_agent
 
-# Run the pipeline (無須安裝額外套件)
-python main.py
+# 2. 安裝必要套件
+pip install requests python-dotenv
+
+# 3. 建立並設置 .env 檔案
+echo 'OPENROUTER_API_KEY="您的_OpenRouter_金鑰"' > .env
+echo 'FINMIND_API_KEY="您的_FinMind_金鑰"' >> .env
+
+# 4. Run the pipeline
+python3 main.py
 ```
 
-您將會在終端機看到 Phase 1 到 Phase 3 的啟動過程，以及最終產出的 JSON 格式多空推演報告。
+您將會在終端機看到完整的三階段平行運算啟動過程，並在最後自動產生 **Gemma-4** 回傳的綜合推演報告與一份 `Mermaid` 格式的時序視覺化圖表。所有的推演細節（含傳遞給 LLM 的 prompt）都會以 JSON 形式完整保留在動態生成的 `trace/task_id=<UUID>/` 資料夾內。
 
 ---
 
@@ -90,8 +102,9 @@ python main.py
 
 開源社群的協同開發將是這個架構發光發熱的關鍵。歡迎發起 Pull Request 協助推進以下待辦事項：
 
-- [ ] **Real Data 串接**: 將 `ingestion.py` 內寫死的假數據，改由真實 API (如 [FinMind](https://github.com/FinMind/FinMind), `twstock`, `Shioaji` 等) 動態擷取。
-- [ ] **LLM 大語言模型整合**: 將 `synthesizer.py` 內的簡易關鍵字計算法，替換為實際調用 OpenAI GPT-4 / Google Gemini API，實現更具深度的語意推演與邏輯辯證。
+- [x] **Real Data 串接**: 將 `ingestion.py` 改由真實 API [FinMind](https://github.com/FinMind/FinMind) 動態擷取真實股價、三大法人與財報數據。
+- [x] **LLM 大語言模型整合**: 將 `synthesizer.py` 替換為實際調用 OpenRouter (Google Gemma-4-31B) API，實現具深度的語意推演與邏輯辯證，嚴格限制投資建議的輸出。
+- [x] **Observability Trace 機制**: 加入全系統不干擾原始運算的 Trace 機制與 Mermaid 流程視覺化，以提供透明可審查的模型沙盒環境。
 - [ ] **擴張 Agent 種類**: 加入如「新聞情緒 Agent (News Sentiment Agent)」、「外資期貨空單避險 Agent」等專攻特定指標的觀察器。
 - [ ] **Asynchronous 支援**: 將底層 Threading 基礎升級為 `asyncio` 以應對未來更大規模的併發分析。
 
