@@ -92,6 +92,10 @@ echo 'FINMIND_API_KEY="您的_FinMind_金鑰"' >> .env
 
 # 4. Run the pipeline
 python3 main.py
+
+# 5. Run the Streamlit UI
+pip install streamlit shioaji
+streamlit run src/ui/app.py
 ```
 
 您將會在終端機看到完整的三階段平行運算啟動過程，並在最後自動產生 **Gemma-4** 回傳的綜合推演報告與一份 `Mermaid` 格式的時序視覺化圖表。所有的推演細節（含傳遞給 LLM 的 prompt）都會以 JSON 形式完整保留在動態生成的 `trace/task_id=<UUID>/` 資料夾內。
@@ -105,6 +109,9 @@ python3 main.py
 - [x] **Real Data 串接**: 將 `ingestion.py` 改由真實 API [FinMind](https://github.com/FinMind/FinMind) 動態擷取真實股價、三大法人與財報數據。
 - [x] **LLM 大語言模型整合**: 將 `synthesizer.py` 替換為實際調用 OpenRouter (Google Gemma-4-31B) API，實現具深度的語意推演與邏輯辯證，嚴格限制投資建議的輸出。
 - [x] **Observability Trace 機制**: 加入全系統不干擾原始運算的 Trace 機制與 Mermaid 流程視覺化，以提供透明可審查的模型沙盒環境。
+- [x] **券商資料串接(唯讀)**: 整合 Shioaji API 查詢帳務、庫存與即時行情，明確不提供下單功能，避免自動交易的資金風險。
+- [x] **輔助人格 Agent 擴充**: 新增資產配置、定價把關、風控煞車(具否決權)、執行紀律四類 Agent，強化「把關」而非「預測」的系統定位。
+- [x] **Streamlit UI**: 提供密碼保護的網頁儀表板，取代純終端機互動。
 - [ ] **擴張 Agent 種類**: 加入如「新聞情緒 Agent (News Sentiment Agent)」、「外資期貨空單避險 Agent」等專攻特定指標的觀察器。
 - [ ] **Asynchronous 支援**: 將底層 Threading 基礎升級為 `asyncio` 以應對未來更大規模的併發分析。
 
@@ -113,4 +120,7 @@ python3 main.py
 ## ⚠️ 免責聲明 (Disclaimer)
 
 **本系統為技術概念驗證 (PoC) 與軟體架構展示，絕對不構成任何財務、投資或交易建議。**
+
 台股市場具有極高風險與不可預測之政策干預。系統設計者與貢獻者不對任何人因依賴本專案產出之分析結果而造成的資金損失承擔任何法律與賠償責任。使用者請務必獨立思考，盈虧自負。
+
+本系統與您的證券帳戶僅為唯讀查詢串接，系統不具備、也不會實作任何自動下單功能。所有交易決策與實際下單動作，均須由使用者本人於券商官方 App 或網頁完成。

@@ -1,3 +1,4 @@
+import os
 import threading
 from typing import Dict, Any
 
@@ -9,6 +10,14 @@ from src.agents.institutional import InstitutionalFlowAgent
 from src.agents.event import EventCalendarAgent
 from src.agents.synthesizer import DecisionSynthesizerAgent
 from src.trace import TraceCollector
+
+# 新增輔助人格 Agent
+from src.agents.asset_allocation import AssetAllocationAgent
+from src.agents.pricing_gatekeeper import PricingGatekeeperAgent
+from src.agents.risk_veto import RiskVetoAgent
+from src.agents.discipline import DisciplineAgent
+
+from src.integrations import shioaji_client
 
 def run_agent_in_thread(agent_class, context: SharedContext, report_key: str, collector: TraceCollector, stage_name: str):
     agent = agent_class()
@@ -35,19 +44,50 @@ def run_agent_in_thread(agent_class, context: SharedContext, report_key: str, co
     agent.close()
 
 class OrchestratorPipeline:
-    def __init__(self, symbol: str, task_id: str):
+    def __init__(self, symbol: str, task_id: str, journal_store=None, cooldown_tracker=None):
         self.symbol = symbol
         self.task_id = task_id
         self.context = SharedContext(task_id=task_id, symbol=symbol)
         self.trace_collector = TraceCollector(task_id)
+        
+        from src.core.journal import JournalStore
+        from src.core.cooldown import CooldownTracker
+        self.journal_store = journal_store or JournalStore()
+        self.cooldown_tracker = cooldown_tracker or CooldownTracker()
 
-    def run_phase_one(self):
+    def run_phase_one(self, expected_gain_pct: float = 30.0, max_loss_pct: float = 10.0):
         ingestion_agent = DataIngestionAgent(symbol=self.symbol)
+        
+        # 串接 Shioaji 取得帳戶與部位資訊
+        api_key = os.environ.get("SHIOAJI_API_KEY") or os.environ.get("SJ_API_KEY", "")
+        secret_key = os.environ.get("SHIOAJI_SECRET_KEY") or os.environ.get("SJ_SECRET_KEY", "")
+        
+        api = None
+        account_balance = {"cash": 1500000.0, "total_limit": 3000000.0}
+        position_list = []
+        if api_key and secret_key:
+            try:
+                api = shioaji_client.login(api_key, secret_key)
+                account_balance = shioaji_client.get_account_balance(api)
+                position_list = shioaji_client.get_position_list(api)
+            except Exception as e:
+                print(f"[Shioaji Ingestion Warning] {e} - 使用預設帳戶資料。")
+            finally:
+                if api:
+                    shioaji_client.logout(api)
+                    
         unified_data = {
+            "symbol": self.symbol,
+            "expected_gain_pct": expected_gain_pct,
+            "max_loss_pct": max_loss_pct,
             "price_action": ingestion_agent.fetch_price_volume_data(),
             "institutional_flow": ingestion_agent.fetch_institutional_margin_data(),
             "fundamentals": ingestion_agent.fetch_fundamental_data(),
-            "calendar_events": ingestion_agent.fetch_calendar_events()
+            "calendar_events": ingestion_agent.fetch_calendar_events(),
+            "account_balance": account_balance,
+            "position_list": position_list,
+            "journal_history": [e.to_dict() for e in self.journal_store.get_history(self.symbol)],
+            "cooldown_passed": self.cooldown_tracker.is_cooldown_passed(self.symbol)
         }
         
         self.trace_collector.record_agent_trace(
@@ -62,12 +102,16 @@ class OrchestratorPipeline:
 
     def run_phase_two_parallel(self):
         threads = []
-        # 定義要平行啟動的 Agent 與寫入的 Key
+        # 定義要平行啟動的 Agent 與寫入的 Key (包含四個新增的輔助人格 Agent)
         agent_configs = [
             (FundamentalAgent, "fundamental_report", "02_fundamental"),
             (TechnicalAgent, "technical_report", "02_technical"),
             (InstitutionalFlowAgent, "institutional_flow_report", "02_institutional"),
-            (EventCalendarAgent, "event_calendar_report", "02_event")
+            (EventCalendarAgent, "event_calendar_report", "02_event"),
+            (AssetAllocationAgent, "asset_allocation_report", "02_asset_allocation"),
+            (PricingGatekeeperAgent, "pricing_gatekeeper_report", "02_pricing_gatekeeper"),
+            (RiskVetoAgent, "risk_veto_report", "02_risk_veto"),
+            (DisciplineAgent, "discipline_report", "02_discipline")
         ]
 
         for agent_class, report_key, stage_name in agent_configs:
@@ -78,14 +122,21 @@ class OrchestratorPipeline:
         for t in threads:
             t.join()
 
-    def run_phase_three(self):
+    def run_phase_three(self, expected_gain_pct: float = 30.0, max_loss_pct: float = 10.0):
         agent = DecisionSynthesizerAgent()
-        synthesis_report = agent.synthesize(self.context.data, collector=self.trace_collector)
+        synthesis_report = agent.synthesize(
+            self.context.data,
+            collector=self.trace_collector,
+            cooldown_tracker=self.cooldown_tracker,
+            symbol=self.symbol,
+            expected_gain_pct=expected_gain_pct,
+            max_loss_pct=max_loss_pct
+        )
         self.context.write("synthesis_report", synthesis_report)
         agent.close()
 
-    def execute_all(self):
-        self.run_phase_one()
+    def execute_all(self, expected_gain_pct: float = 30.0, max_loss_pct: float = 10.0):
+        self.run_phase_one(expected_gain_pct=expected_gain_pct, max_loss_pct=max_loss_pct)
         self.run_phase_two_parallel()
-        self.run_phase_three()
+        self.run_phase_three(expected_gain_pct=expected_gain_pct, max_loss_pct=max_loss_pct)
         return self.context

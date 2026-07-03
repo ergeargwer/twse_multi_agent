@@ -1,6 +1,7 @@
 import os
 import datetime
 import requests
+import pandas as pd
 from typing import Dict, Any
 
 class DataIngestionAgent:
@@ -10,6 +11,24 @@ class DataIngestionAgent:
         self.is_active = True
         self.api_url = "https://api.finmindtrade.com/api/v4/data"
         self.token = os.environ.get("FINMIND_API_KEY", "")
+        
+        # Initialize Shioaji API if credentials are provided
+        self.sj_active = False
+        sj_api_key = os.environ.get("SJ_API_KEY", "")
+        sj_secret_key = os.environ.get("SJ_SECRET_KEY", "")
+        sj_simulation = os.environ.get("SJ_SIMULATION", "True").lower() in ("true", "1", "yes")
+
+        if sj_api_key and sj_secret_key:
+            try:
+                import shioaji as sj
+                print(f"[Shioaji API] Initializing API Client (Simulation={sj_simulation})...")
+                self.sj_api = sj.Shioaji(simulation=sj_simulation)
+                self.sj_api.login(api_key=sj_api_key, secret_key=sj_secret_key)
+                self.sj_active = True
+                print("[Shioaji API] Login successful.")
+            except Exception as e:
+                print(f"[Shioaji API Init Error] Failed to connect/login: {e}")
+                self.sj_active = False
         
     def _fetch_finmind(self, dataset: str, start_date: str, end_date: str = "") -> list:
         params = {
@@ -37,13 +56,63 @@ class DataIngestionAgent:
             "close": None,
             "ma5": None,
             "ma20": None,
-            "ma60": None
+            "ma60": None,
+            "raw_history": []
         }
         if not self.is_active:
             return result
         
         # Need at least 60 trading days, so fetch 120 calendar days
         start_date = (datetime.date.today() - datetime.timedelta(days=120)).strftime("%Y-%m-%d")
+        
+        # Try fetching from Shioaji first
+        if self.sj_active:
+            print(f"[Shioaji API] Fetching daily K-bars for {self.fm_symbol} (120 days)...")
+            try:
+                contract = self.sj_api.Contracts.Stocks[self.fm_symbol]
+                
+                # Fetch in 30-day chunks to respect API limitations
+                today = datetime.date.today()
+                chunks = []
+                for i in range(4):
+                    chunk_start = (today - datetime.timedelta(days=(i+1)*30 - 1)).strftime("%Y-%m-%d")
+                    chunk_end = (today - datetime.timedelta(days=i*30)).strftime("%Y-%m-%d")
+                    
+                    kbars = self.sj_api.kbars(contract, start=chunk_start, end=chunk_end)
+                    if kbars:
+                        df_chunk = pd.DataFrame({**kbars})
+                        chunks.append(df_chunk)
+                
+                if chunks:
+                    df = pd.concat(chunks).drop_duplicates(subset=["ts"]).sort_values("ts")
+                    closes = df["Close"].tolist()
+                    if closes:
+                        result["close"] = closes[-1]
+                        if len(closes) >= 5:
+                            result["ma5"] = round(sum(closes[-5:]) / 5, 2)
+                        if len(closes) >= 20:
+                            result["ma20"] = round(sum(closes[-20:]) / 20, 2)
+                        if len(closes) >= 60:
+                            result["ma60"] = round(sum(closes[-60:]) / 60, 2)
+                        
+                        raw_history = []
+                        for idx, row in df.iterrows():
+                            raw_history.append({
+                                "date": str(row["ts"]),
+                                "open": float(row["Open"]),
+                                "high": float(row["High"]),
+                                "low": float(row["Low"]),
+                                "close": float(row["Close"]),
+                                "volume": float(row["Volume"])
+                            })
+                        result["raw_history"] = raw_history
+                        print(f"[Shioaji API] Price, MAs and raw history successfully fetched from Shioaji.")
+                        return result
+            except Exception as e:
+                print(f"[Shioaji API Error] Failed to fetch kbars: {e}. Falling back to FinMind...")
+        
+        # Fallback to FinMind
+        print("[FinMind API] Fetching price/volume data...")
         data = self._fetch_finmind("TaiwanStockPrice", start_date)
         if data:
             closes = [d.get("close", 0) for d in data]
@@ -55,13 +124,26 @@ class DataIngestionAgent:
                     result["ma20"] = round(sum(closes[-20:]) / 20, 2)
                 if len(closes) >= 60:
                     result["ma60"] = round(sum(closes[-60:]) / 60, 2)
+                
+                raw_history = []
+                for d in data:
+                    raw_history.append({
+                        "date": d.get("date"),
+                        "open": float(d.get("open", 0)),
+                        "high": float(d.get("max", 0)),
+                        "low": float(d.get("min", 0)),
+                        "close": float(d.get("close", 0)),
+                        "volume": float(d.get("Trading_Volume", 0))
+                    })
+                result["raw_history"] = raw_history
         return result
 
     def fetch_institutional_margin_data(self) -> Dict[str, Any]:
         result = {
             "foreign_investor": None,
             "investment_trust": None,
-            "margin_balance_change": None
+            "margin_balance_change": None,
+            "raw_history": []
         }
         if not self.is_active:
             return result
@@ -88,6 +170,21 @@ class DataIngestionAgent:
             
             result["foreign_investor"] = foreign_net
             result["investment_trust"] = trust_net
+            
+            # Group daily net buy/sell for history
+            daily_net = {}
+            for row in inst_data:
+                d = row.get("date")
+                name = row.get("name")
+                net = row.get("buy", 0) - row.get("sell", 0)
+                if d not in daily_net:
+                    daily_net[d] = {"foreign_investor_net": 0, "investment_trust_net": 0}
+                if name == "Foreign_Investor":
+                    daily_net[d]["foreign_investor_net"] += net
+                elif name == "Investment_Trust":
+                    daily_net[d]["investment_trust_net"] += net
+            
+            result["raw_history"] = [{"date": k, **v} for k, v in sorted(daily_net.items())]
         
         # Margin
         margin_data = self._fetch_finmind("TaiwanStockMarginPurchaseShortSale", start_date)
@@ -106,7 +203,10 @@ class DataIngestionAgent:
         result = {
             "eps": None,
             "monthly_revenue_growth_yoy": None,
-            "pe_ratio": None
+            "pe_ratio": None,
+            "pe_ratio_5y_avg": None,
+            "latest_revenue": None,
+            "last_year_revenue": None
         }
         if not self.is_active:
             return result
@@ -116,6 +216,7 @@ class DataIngestionAgent:
         rev_data = self._fetch_finmind("TaiwanStockMonthRevenue", start_date_rev)
         if rev_data and len(rev_data) >= 13:
             latest_rev = rev_data[-1].get("revenue", 0)
+            result["latest_revenue"] = latest_rev
             # Find the same month last year.
             last_year_month = rev_data[-1].get("revenue_month")
             last_year_year = rev_data[-1].get("revenue_year") - 1
@@ -124,7 +225,7 @@ class DataIngestionAgent:
                 if row.get("revenue_year") == last_year_year and row.get("revenue_month") == last_year_month:
                     last_year_rev = row.get("revenue", 0)
                     break
-            
+            result["last_year_revenue"] = last_year_rev
             if last_year_rev and last_year_rev > 0:
                 yoy = (latest_rev - last_year_rev) / last_year_rev * 100
                 result["monthly_revenue_growth_yoy"] = round(yoy, 2)
@@ -138,10 +239,15 @@ class DataIngestionAgent:
             if eps_rows:
                 result["eps"] = eps_rows[-1].get("value")
                 
-        # PE Ratio (Dataset is TaiwanStockPER)
-        pe_data = self._fetch_finmind("TaiwanStockPER", start_date_eps)
+        # PE Ratio (Dataset is TaiwanStockPER) - Fetch 5 years for average
+        start_date_pe = (datetime.date.today() - datetime.timedelta(days=5*365)).strftime("%Y-%m-%d")
+        pe_data = self._fetch_finmind("TaiwanStockPER", start_date_pe)
         if pe_data:
             result["pe_ratio"] = pe_data[-1].get("PER")
+            # Calculate 5-year average (only count positive PEs)
+            pe_vals = [row.get("PER", 0) for row in pe_data if row.get("PER", 0) > 0]
+            if pe_vals:
+                result["pe_ratio_5y_avg"] = round(sum(pe_vals) / len(pe_vals), 2)
 
         return result
 
@@ -150,13 +256,17 @@ class DataIngestionAgent:
             return {
                 "in_etf_rebalance_watchlist": None,
                 "days_to_margin_recall": None,
-                "days_to_ex_dividend": None
+                "days_to_ex_dividend": None,
+                "margin_maintenance_ratio": None,
+                "has_large_buyback": None
             }
             
         result = {
             "in_etf_rebalance_watchlist": None,
             "days_to_margin_recall": None,
-            "days_to_ex_dividend": None
+            "days_to_ex_dividend": None,
+            "margin_maintenance_ratio": None,
+            "has_large_buyback": None
         }
         
         today = datetime.date.today()
@@ -196,3 +306,9 @@ class DataIngestionAgent:
 
     def close(self):
         self.is_active = False
+        if hasattr(self, "sj_api") and self.sj_active:
+            try:
+                self.sj_api.logout()
+                print("[Shioaji API] Logged out successfully.")
+            except Exception:
+                pass
