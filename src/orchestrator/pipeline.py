@@ -63,15 +63,36 @@ class OrchestratorPipeline:
         secret_key = os.environ.get("SHIOAJI_SECRET_KEY") or os.environ.get("SJ_SECRET_KEY", "")
         
         api = None
-        account_balance = {"cash": 1500000.0, "total_limit": 3000000.0}
-        position_list = []
-        if api_key and secret_key:
+        account_balance = None
+        position_list = None
+        account_data_status = "ok"
+        account_data_error = ""
+
+        if not api_key or not secret_key:
+            account_data_status = "not_configured"
+            print("未設定 SHIOAJI_API_KEY/SHIOAJI_SECRET_KEY，本次分析將不包含真實帳戶資料")
+        else:
             try:
                 api = shioaji_client.login(api_key, secret_key)
                 account_balance = shioaji_client.get_account_balance(api)
                 position_list = shioaji_client.get_position_list(api)
+                account_data_status = "ok"
+            except shioaji_client.ShioajiQueryError as e:
+                account_data_status = "error"
+                account_data_error = str(e)
+                account_balance = None
+                position_list = None
+                print(f"[Shioaji Ingestion Error] 帳戶資料查詢失敗: {e}")
+                import traceback
+                traceback.print_exc()
             except Exception as e:
-                print(f"[Shioaji Ingestion Warning] {e} - 使用預設帳戶資料。")
+                account_data_status = "error"
+                account_data_error = f"連線或認證失敗: {str(e)}"
+                account_balance = None
+                position_list = None
+                print(f"[Shioaji Ingestion Error] 認證或未知錯誤: {e}")
+                import traceback
+                traceback.print_exc()
             finally:
                 if api:
                     shioaji_client.logout(api)
@@ -80,6 +101,10 @@ class OrchestratorPipeline:
             "symbol": self.symbol,
             "expected_gain_pct": expected_gain_pct,
             "max_loss_pct": max_loss_pct,
+            "account_data_status": account_data_status,
+            "account_data_error": account_data_error,
+            "account_balance": account_balance,
+            "position_list": position_list,
             "price_action": ingestion_agent.fetch_price_volume_data(),
             "institutional_flow": ingestion_agent.fetch_institutional_margin_data(),
             "fundamentals": ingestion_agent.fetch_fundamental_data(),

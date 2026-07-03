@@ -6,6 +6,10 @@
 import shioaji as sj
 from typing import Dict, Any, List
 
+class ShioajiQueryError(Exception):
+    """Shioaji 查詢例外類別"""
+    pass
+
 def login(api_key: str, secret_key: str) -> sj.Shioaji:
     # 登入永豐金 Shioaji API
     api = sj.Shioaji()
@@ -27,19 +31,18 @@ def get_account_balance(api: sj.Shioaji) -> Dict[str, Any]:
         # Shioaji 的 AccountBalance 物件屬性為 acc_balance 或是 cash_balance
         cash = getattr(balance_data, "acc_balance", None)
         if cash is None:
-            cash = getattr(balance_data, "cash_balance", 1500000.0)
+            cash = getattr(balance_data, "cash_balance", None)
             
-        total_limit = getattr(balance_data, "collateral", 3000000.0)
+        if cash is None:
+            raise ValueError("無效的餘額欄位回傳")
+            
+        total_limit = getattr(balance_data, "collateral", 0.0)
         return {
             "cash": float(cash),
             "total_limit": float(total_limit)
         }
-    except Exception:
-        # 發生錯誤時的模擬/預設回傳值
-        return {
-            "cash": 1500000.0,
-            "total_limit": 3000000.0
-        }
+    except Exception as e:
+        raise ShioajiQueryError(f"查詢帳戶餘額失敗: {str(e)}") from e
 
 def get_position_list(api: sj.Shioaji) -> List[Dict[str, Any]]:
     # 取得庫存部位列表
@@ -71,12 +74,8 @@ def get_position_list(api: sj.Shioaji) -> List[Dict[str, Any]]:
                 "unrealized_pnl": unrealized_pnl
             })
         return res
-    except Exception:
-        # 發生錯誤或模擬帳戶時，提供預設庫存供系統演示
-        return [
-            {"symbol": "2330", "name": "台積電", "shares": 1000, "cost": 600000.0, "unrealized_pnl": 211000.0},
-            {"symbol": "2379", "name": "瑞昱", "shares": 500, "cost": 200000.0, "unrealized_pnl": -15000.0}
-        ]
+    except Exception as e:
+        raise ShioajiQueryError(f"查詢庫存部位失敗: {str(e)}") from e
 
 def get_snapshot(api: sj.Shioaji, symbol: str) -> Dict[str, Any]:
     # 取得個股即時報價快照
@@ -94,17 +93,10 @@ def get_snapshot(api: sj.Shioaji, symbol: str) -> Dict[str, Any]:
                 "low": float(getattr(snap, "low", 0.0)),
                 "volume": float(getattr(snap, "total_volume", 0.0))
             }
-    except Exception:
-        pass
-    # 失敗時的預設值
-    return {
-        "symbol": symbol,
-        "close": 811.0,
-        "open": 810.0,
-        "high": 815.0,
-        "low": 805.0,
-        "volume": 12000.0
-    }
+        else:
+            raise ValueError("快照回傳列表為空")
+    except Exception as e:
+        raise ShioajiQueryError(f"查詢即時報價失敗: {str(e)}") from e
 
 def get_kbars(api: sj.Shioaji, symbol: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
     # 取得歷史 K 棒資料
@@ -126,6 +118,7 @@ def get_kbars(api: sj.Shioaji, symbol: str, start_date: str, end_date: str) -> L
                     "volume": float(row["Volume"])
                 })
             return res
-    except Exception:
-        pass
-    return []
+        else:
+            raise ValueError("K棒回傳資料為空")
+    except Exception as e:
+        raise ShioajiQueryError(f"查詢歷史 K 棒失敗: {str(e)}") from e

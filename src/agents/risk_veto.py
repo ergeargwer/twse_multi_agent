@@ -10,13 +10,32 @@ class RiskVetoAgent:
         if not self.is_active:
             raise RuntimeError("Risk Veto Agent 已關閉。")
 
+        account_data_status = ingested_data.get("account_data_status", "not_configured")
+        
+        if account_data_status != "ok":
+            veto = True
+            if account_data_status == "not_configured":
+                reason = "未設定 Shioaji 帳戶金鑰，系統無真實帳戶資料可供風控判斷，已預設攔截，僅能提供不涉及部位集中度的一般性分析。"
+            else:
+                error_detail = ingested_data.get("account_data_error", "未知錯誤")
+                reason = f"帳戶資料查詢失敗（{error_detail}），系統無法確認實際部位與資金水位，基於安全考量已預設攔截。"
+            
+            report = {
+                "agent_name": "Risk Veto Agent",
+                "veto": True,
+                "veto_reason": reason,
+                "objective_findings": [f"風控攔截：{reason}"],
+                "summary": "風控煞車評估完成（因帳戶資料不可用，預設為否決狀態）。"
+            }
+            return report
+
         symbol = ingested_data.get("symbol", "未知標的")
         target_id = symbol.split(".")[0]
         
         expected_gain = ingested_data.get("expected_gain_pct", 30.0)
         max_loss = ingested_data.get("max_loss_pct", 10.0)
         
-        balance = ingested_data.get("account_balance") or {"cash": 1500000.0, "total_limit": 3000000.0}
+        balance = ingested_data.get("account_balance") or {"cash": 0.0, "total_limit": 0.0}
         position_list = ingested_data.get("position_list") or []
 
         # 1. 檢查風暴比門檻 (3:1)

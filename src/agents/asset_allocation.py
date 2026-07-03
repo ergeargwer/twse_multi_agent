@@ -10,10 +10,24 @@ class AssetAllocationAgent:
         if not self.is_active:
             raise RuntimeError("Asset Allocation Agent 已關閉。")
 
+        account_data_status = ingested_data.get("account_data_status", "not_configured")
+        
+        if account_data_status != "ok":
+            return {
+                "agent_name": "Asset Allocation Agent",
+                "data_available": False,
+                "cash_ratio": None,
+                "position_concentration": {},
+                "concentration_alerts": [],
+                "suggested_position_step": None,
+                "objective_findings": ["帳戶資料目前不可用，無法進行資產配置分析。"],
+                "summary": "資產配置分析未執行（帳戶資料不可用）。"
+            }
+
         symbol = ingested_data.get("symbol", "未知標的")
         target_id = symbol.split(".")[0]
         
-        balance = ingested_data.get("account_balance") or {"cash": 1500000.0, "total_limit": 3000000.0}
+        balance = ingested_data.get("account_balance") or {"cash": 0.0, "total_limit": 0.0}
         position_list = ingested_data.get("position_list") or []
 
         cash = float(balance.get("cash", 0.0))

@@ -105,110 +105,112 @@ if check_password():
         st.title("總覽儀表板")
         st.subheader("資產與部位集中度概覽")
         
-        # 讀取 Shioaji 帳戶資料 (使用 pipeline 的 mock 或從環境變數嘗試讀取)
+        # 讀取 Shioaji 帳戶資料 (僅真實資料，查詢失敗或未設定時顯示提示，不回傳假資料)
         from src.integrations import shioaji_client
         api_key = os.environ.get("SHIOAJI_API_KEY") or os.environ.get("SJ_API_KEY", "")
         secret_key = os.environ.get("SHIOAJI_SECRET_KEY") or os.environ.get("SJ_SECRET_KEY", "")
         
-        api = None
-        account_balance = {"cash": 1500000.0, "total_limit": 3000000.0}
-        position_list = []
+        account_balance = None
+        position_list = None
+        query_success = False
         
-        if api_key and secret_key:
+        if not api_key or not secret_key:
+            st.info("尚未設定 Shioaji 帳戶金鑰，請於 .env 中設定 SHIOAJI_API_KEY 與 SHIOAJI_SECRET_KEY 後即可查看真實帳戶資料。")
+        else:
             with st.spinner("正在安全連接券商取得最新帳務與部位資料..."):
+                api = None
                 try:
                     api = shioaji_client.login(api_key, secret_key)
                     account_balance = shioaji_client.get_account_balance(api)
                     position_list = shioaji_client.get_position_list(api)
+                    query_success = True
+                except shioaji_client.ShioajiQueryError as e:
+                    st.error(f"帳戶資料查詢失敗：{str(e)}")
                 except Exception as e:
-                    st.warning(f"無法登入永豐金 API: {e}。使用預設展示資料。")
+                    st.error(f"帳戶資料連線或認證失敗：{str(e)}")
                 finally:
                     if api:
                         shioaji_client.logout(api)
-        else:
-            position_list = [
-                {"symbol": "2330", "name": "台積電", "shares": 1000, "cost": 600000.0, "unrealized_pnl": 211000.0},
-                {"symbol": "2379", "name": "瑞昱", "shares": 500, "cost": 200000.0, "unrealized_pnl": -15000.0}
-            ]
+                        
+        if query_success and account_balance is not None and position_list is not None:
+            cash = float(account_balance.get("cash", 0.0))
             
-        cash = float(account_balance.get("cash", 0.0))
-        
-        # 部位計算
-        total_pos_val = 0.0
-        position_rows = []
-        for pos in position_list:
-            symbol = pos.get("symbol", "")
-            name = pos.get("name", "未知")
-            shares = pos.get("shares", 0)
-            cost = pos.get("cost", 0.0)
-            unrealized_pnl = pos.get("unrealized_pnl", 0.0)
-            m_val = cost + unrealized_pnl
-            total_pos_val += m_val
-            position_rows.append({
-                "股票代號": symbol,
-                "股票名稱": name,
-                "持股股數": f"{shares:,}",
-                "持有成本 (元)": f"{cost:,.0f}",
-                "未實現損益 (元)": f"{unrealized_pnl:,.0f}",
-                "目前估計市值 (元)": f"{m_val:,.0f}",
-                "raw_val": m_val,
-                "display_label": f"{symbol} {name}"
-            })
+            # 部位計算
+            total_pos_val = 0.0
+            position_rows = []
+            for pos in position_list:
+                symbol = pos.get("symbol", "")
+                name = pos.get("name", "未知")
+                shares = pos.get("shares", 0)
+                cost = pos.get("cost", 0.0)
+                unrealized_pnl = pos.get("unrealized_pnl", 0.0)
+                m_val = cost + unrealized_pnl
+                total_pos_val += m_val
+                position_rows.append({
+                    "股票代號": symbol,
+                    "股票名稱": name,
+                    "持股股數": f"{shares:,}",
+                    "持有成本 (元)": f"{cost:,.0f}",
+                    "未實現損益 (元)": f"{unrealized_pnl:,.0f}",
+                    "目前估計市值 (元)": f"{m_val:,.0f}",
+                    "raw_val": m_val,
+                    "display_label": f"{symbol} {name}"
+                })
+                
+            total_assets = cash + total_pos_val
+            cash_ratio = (cash / total_assets) if total_assets > 0 else 0.0
             
-        total_assets = cash + total_pos_val
-        cash_ratio = (cash / total_assets) if total_assets > 0 else 0.0
-        
-        # 指標卡片 (自定義 HSL 漸層毛玻璃風格)
-        card_html = f"""
-        <div style="display: flex; gap: 20px; margin-bottom: 24px;">
-            <div class="premium-card" style="flex: 1; border-left: 5px solid #1e3c72;">
-                <div style="font-size: 0.9rem; color: #888; font-weight: 600;">總資產價值 (元)</div>
-                <div style="font-size: 2rem; font-weight: 800; margin-top: 8px; color: #1e3c72;">{total_assets:,.0f}</div>
+            # 指標卡片 (自定義 HSL 漸層毛玻璃風格)
+            card_html = f"""
+            <div style="display: flex; gap: 20px; margin-bottom: 24px;">
+                <div class="premium-card" style="flex: 1; border-left: 5px solid #1e3c72;">
+                    <div style="font-size: 0.9rem; color: #888; font-weight: 600;">總資產價值 (元)</div>
+                    <div style="font-size: 2rem; font-weight: 800; margin-top: 8px; color: #1e3c72;">{total_assets:,.0f}</div>
+                </div>
+                <div class="premium-card" style="flex: 1; border-left: 5px solid #2a5298;">
+                    <div style="font-size: 0.9rem; color: #888; font-weight: 600;">現金餘額 (元)</div>
+                    <div style="font-size: 2rem; font-weight: 800; margin-top: 8px; color: #2a5298;">{cash:,.0f} <span style="font-size: 0.9rem; font-weight: 400; color: #666;">({cash_ratio*100:.2f}%)</span></div>
+                </div>
+                <div class="premium-card" style="flex: 1; border-left: 5px solid #c33764;">
+                    <div style="font-size: 0.9rem; color: #888; font-weight: 600;">證券總市值 (元)</div>
+                    <div style="font-size: 2rem; font-weight: 800; margin-top: 8px; color: #c33764;">{total_pos_val:,.0f} <span style="font-size: 0.9rem; font-weight: 400; color: #666;">({(1.0-cash_ratio)*100:.2f}%)</span></div>
+                </div>
             </div>
-            <div class="premium-card" style="flex: 1; border-left: 5px solid #2a5298;">
-                <div style="font-size: 0.9rem; color: #888; font-weight: 600;">現金餘額 (元)</div>
-                <div style="font-size: 2rem; font-weight: 800; margin-top: 8px; color: #2a5298;">{cash:,.0f} <span style="font-size: 0.9rem; font-weight: 400; color: #666;">({cash_ratio*100:.2f}%)</span></div>
-            </div>
-            <div class="premium-card" style="flex: 1; border-left: 5px solid #c33764;">
-                <div style="font-size: 0.9rem; color: #888; font-weight: 600;">證券總市值 (元)</div>
-                <div style="font-size: 2rem; font-weight: 800; margin-top: 8px; color: #c33764;">{total_pos_val:,.0f} <span style="font-size: 0.9rem; font-weight: 400; color: #666;">({(1.0-cash_ratio)*100:.2f}%)</span></div>
-            </div>
-        </div>
-        """
-        st.markdown(card_html, unsafe_allow_html=True)
-        
-        # 部位明細
-        st.write("---")
-        st.write("### 目前庫存部位明細")
-        if position_rows:
-            df_pos = pd.DataFrame(position_rows)
-            st.dataframe(df_pos.drop(columns=["raw_val", "display_label"]), use_container_width=True)
-        else:
-            st.info("目前庫存無持股。")
+            """
+            st.markdown(card_html, unsafe_allow_html=True)
             
-        # 集中度 analyses 圖表
-        st.write("---")
-        st.write("### 資產配置集中度比例圖")
-        chart_data = {"現金": cash}
-        for item in position_rows:
-            chart_data[item["display_label"]] = item["raw_val"]
+            # 部位明細
+            st.write("---")
+            st.write("### 目前庫存部位明細")
+            if position_rows:
+                df_pos = pd.DataFrame(position_rows)
+                st.dataframe(df_pos.drop(columns=["raw_val", "display_label"]), use_container_width=True)
+            else:
+                st.info("目前庫存無持股。")
+                
+            # 集中度 analyses 圖表
+            st.write("---")
+            st.write("### 資產配置集中度比例圖")
+            chart_data = {"現金": cash}
+            for item in position_rows:
+                chart_data[item["display_label"]] = item["raw_val"]
+                
+            df_chart = pd.DataFrame(list(chart_data.items()), columns=["資產", "金額"])
+            df_chart["占比 (%)"] = df_chart["金額"] / total_assets * 100
             
-        df_chart = pd.DataFrame(list(chart_data.items()), columns=["資產", "金額"])
-        df_chart["占比 (%)"] = df_chart["金額"] / total_assets * 100
-        
-        st.bar_chart(df_chart.set_index("資產")["占比 (%)"])
-        
-        # 檢查集中度警訊
-        st.write("### 集中度風控檢查結果")
-        has_alert = False
-        for k, v in chart_data.items():
-            if k != "現金":
-                ratio = v / total_assets
-                if ratio > 0.30:
-                    st.error(f"警訊：單一標的 {k} 占比達 {ratio*100:.2f}%，已超出 30.0% 的安全限制，請調整資產配置以防禦未知風險。")
-                    has_alert = True
-        if not has_alert:
-            st.success("所有標的部位比例皆符合單一持股低於 30.0% 的風控安全指標。")
+            st.bar_chart(df_chart.set_index("資產")["占比 (%)"])
+            
+            # 檢查集中度警訊
+            st.write("### 集中度風控檢查結果")
+            has_alert = False
+            for k, v in chart_data.items():
+                if k != "現金":
+                    ratio = v / total_assets
+                    if ratio > 0.30:
+                        st.error(f"警訊：單一標的 {k} 占比達 {ratio*100:.2f}%，已超出 30.0% 的安全限制，請調整資產配置以防禦未知風險。")
+                        has_alert = True
+            if not has_alert:
+                st.success("所有標的部位比例皆符合單一持股低於 30.0% 的風控安全指標。")
 
     # 2. 個股分析報告
     elif page == "個股分析報告":
@@ -248,6 +250,12 @@ if check_password():
                         veto_reason = veto_report.get("veto_reason", "")
                         
                         if veto_active:
+                            # 檢查是否為帳戶資料不可用引起的攔截
+                            is_acc_veto = ("帳戶資料不可用" in veto_reason or 
+                                           "未設定" in veto_reason or 
+                                           "查詢失敗" in veto_reason or 
+                                           "帳戶金鑰" in veto_reason)
+                            
                             veto_html = f"""
                             <div class="veto-card">
                                 <h3 style="margin: 0 0 8px 0; color: #dc2626; font-weight: 800;">[風控煞車已啟動]</h3>
@@ -255,7 +263,11 @@ if check_password():
                             </div>
                             """
                             st.markdown(veto_html, unsafe_allow_html=True)
-                            st.warning("本次推演未通過安全門檻，強烈建議秉持紀律，暫停交易衝動。")
+                            
+                            if is_acc_veto:
+                                st.warning("本次分析因帳戶資料不可用，風控煞車已預設攔截，非個股本身訊號問題。")
+                            else:
+                                st.warning("本次推演未通過安全門檻，強烈建議秉持紀律，暫停交易衝動。")
                         else:
                             st.success("### [風控檢測通過]\n未觸發任何否決條件。")
                             
