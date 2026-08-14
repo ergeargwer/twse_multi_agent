@@ -68,7 +68,7 @@ class OrchestratorPipeline:
         self,
         expected_gain_pct: float = 30.0,
         max_loss_pct: float = 10.0,
-        vwap_dev_threshold_pct: float = 5.0,
+        ma20_dev_threshold_pct: float = 5.0,
     ):
         ingestion_agent = DataIngestionAgent(symbol=self.symbol)
         cli_probe = probe_collectors()
@@ -120,7 +120,7 @@ class OrchestratorPipeline:
             "symbol": self.symbol,
             "expected_gain_pct": expected_gain_pct,
             "max_loss_pct": max_loss_pct,
-            "vwap_dev_threshold_pct": vwap_dev_threshold_pct,
+            "ma20_dev_threshold_pct": ma20_dev_threshold_pct,
             "account_data_status": account_data_status,
             "account_data_error": account_data_error,
             "account_balance": account_balance,
@@ -205,12 +205,12 @@ class OrchestratorPipeline:
         self,
         expected_gain_pct: float = 30.0,
         max_loss_pct: float = 10.0,
-        vwap_dev_threshold_pct: float = 5.0,
+        ma20_dev_threshold_pct: float = 5.0,
     ):
         self.run_phase_one(
             expected_gain_pct=expected_gain_pct,
             max_loss_pct=max_loss_pct,
-            vwap_dev_threshold_pct=vwap_dev_threshold_pct,
+            ma20_dev_threshold_pct=ma20_dev_threshold_pct,
         )
         self.run_phase_two_parallel()
         self.run_phase_three(expected_gain_pct=expected_gain_pct, max_loss_pct=max_loss_pct)

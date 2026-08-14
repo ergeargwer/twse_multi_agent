@@ -18,15 +18,15 @@ class BehaviorRiskAgent:
 
         price_data = ingested_data.get("price_action") or {}
         raw_history = price_data.get("raw_history") or []
-        threshold_pct = ingested_data.get("vwap_dev_threshold_pct")
+        threshold_pct = ingested_data.get("ma20_dev_threshold_pct")
         if threshold_pct is None:
-            threshold_pct = self.rules["vwap_dev_threshold_pct_default"]
+            threshold_pct = self.rules["ma20_overbought_dev_pct"]
 
-        result = run_behavior_risk(raw_history, vwap_dev_threshold_pct=threshold_pct)
+        result = run_behavior_risk(raw_history, ma20_dev_threshold_pct=threshold_pct)
 
         report = {
             "agent_name": "Behavior Risk Agent",
-            "metrics_extracted": ["vwap_20", "ma20", "atr", "support", "resistance", "volume_ma20"],
+            "metrics_extracted": ["ma20", "ma20_dev_pct", "atr", "support", "resistance", "volume_ma20"],
             "objective_findings": result["findings"],
             "summary": result["summary"],
             "behavior_risk_signal": result["signal"],
@@ -36,7 +36,9 @@ class BehaviorRiskAgent:
             "high_chase_count": result["high_chase_count"],
             "low_sell_count": result["low_sell_count"],
             "bars_analyzed": result["bars_analyzed"],
-            "vwap_dev_threshold_pct": result["vwap_dev_threshold_pct"],
+            "oversold_count": result.get("oversold_count", 0),
+            "extreme_oversold_count": result.get("extreme_oversold_count", 0),
+            "ma20_dev_threshold_pct": result["ma20_dev_threshold_pct"],
             "strict_disclaimer": "所有分析僅為市場行為風險提示，非投資建議，非主力判斷。",
         }
         return report

@@ -39,7 +39,9 @@ technical_agent:
   top_signal_body_pct: 0.02            # 長黑K實體占收盤價比例門檻
 
 behavior_risk_agent:
-  vwap_dev_threshold_pct_default: 5.0  # VWAP乖離預設門檻（可被使用者輸入覆蓋）
+  ma20_oversold_dev_pct: -5.0          # 月線負乖離達此幅度視為超跌型態
+  ma20_extreme_oversold_dev_pct: -13.0 # 極端超跌型態門檻（歷史大盤跌深案例）
+  ma20_overbought_dev_pct: 5.0         # 月線正乖離達此幅度視為高追價（可被使用者輸入覆蓋）
 
 discipline_agent:
   emotional_lookback_entries: 5        # 檢視近期日記筆數
