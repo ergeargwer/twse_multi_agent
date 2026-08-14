@@ -205,6 +205,7 @@ class DataIngestionAgent:
             "monthly_revenue_growth_yoy": None,
             "pe_ratio": None,
             "pe_ratio_5y_avg": None,
+            "pe_ratio_5y_stdev": None,
             "latest_revenue": None,
             "last_year_revenue": None
         }
@@ -247,7 +248,13 @@ class DataIngestionAgent:
             # Calculate 5-year average (only count positive PEs)
             pe_vals = [row.get("PER", 0) for row in pe_data if row.get("PER", 0) > 0]
             if pe_vals:
-                result["pe_ratio_5y_avg"] = round(sum(pe_vals) / len(pe_vals), 2)
+                mean_pe = sum(pe_vals) / len(pe_vals)
+                result["pe_ratio_5y_avg"] = round(mean_pe, 2)
+                if len(pe_vals) >= 2:
+                    variance = sum((value - mean_pe) ** 2 for value in pe_vals) / (len(pe_vals) - 1)
+                    result["pe_ratio_5y_stdev"] = round(variance ** 0.5, 2)
+                else:
+                    result["pe_ratio_5y_stdev"] = None
 
         return result
 

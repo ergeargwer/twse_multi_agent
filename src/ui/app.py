@@ -186,7 +186,9 @@ def render_open_source_panel(bundle: Dict[str, Any], key_prefix: str) -> None:
 
 
 RULE_FIELD_LABELS = {
-    "pe_attractive_multiplier": "本益比低於5年均值幾倍視為「估值具吸引力」",
+    "pe_percentile_attractive_stdev": "本益比位階低於此標準差視為便宜具吸引力",
+    "pe_percentile_extreme_stdev": "本益比位階高於此標準差觸發極端溢價警示",
+    "peg_min_growth_pct": "PEG 估值法適用的最低年增率門檻",
     "revenue_achievement_min_ratio": "月營收達成率低於此比例視為「疑似價值陷阱」",
     "pe_high_threshold": "本益比高於此值視為「相對較高區間」",
     "pe_low_threshold": "本益比低於此值視為「相對較低區間」",

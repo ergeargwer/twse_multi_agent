@@ -2,10 +2,12 @@ version: "1.0.0"
 updated_at: "2026-08-14"
 
 fundamental_agent:
-  pe_attractive_multiplier: 1.5        # 本益比低於5年均值幾倍視為「估值具吸引力」
+  pe_percentile_attractive_stdev: -0.5 # 位階低於此標準差視為便宜具吸引力
+  pe_percentile_extreme_stdev: 3.0     # 位階高於此標準差觸發極端溢價警示
+  pe_high_threshold: 25                # 本益比高於此值視為「相對較高區間」
+  pe_low_threshold: 15                 # 本益比低於此值視為「相對較低區間」
+  peg_min_growth_pct: 15               # PEG=1 適用之最低成長率門檻
   revenue_achievement_min_ratio: 0.96  # 月營收達成率低於此比例視為「疑似價值陷阱」
-  pe_high_threshold: 20                # 本益比高於此值視為「相對較高區間」
-  pe_low_threshold: 10                 # 本益比低於此值視為「相對較低區間」
   revenue_growth_strong_pct: 10        # 月營收年增率達此值視為「雙位數成長」
 
 pricing_gatekeeper_agent:
