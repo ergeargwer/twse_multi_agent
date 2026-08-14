@@ -216,6 +216,7 @@ RULE_FIELD_LABELS = {
     "ma20_overbought_dev_pct": "月線正乖離達此幅度視為高追價（可被使用者輸入覆蓋）",
     "emotional_lookback_entries": "檢視近期日記筆數",
     "emotional_trigger_count": "情緒關鍵字出現筆數達此值視為「傾向偏高」",
+    "cooldown_hours": "交易冷卻時數",
     "margin_call_warning_pct": "融資維持率追繳線",
     "margin_ratio_bottom_signal_pct": "融資維持率止穩打底參考值",
     "margin_ratio_bottom_signal_band_pct": "止穩判斷帶寬（參考值加減此值）",
@@ -906,6 +907,7 @@ if check_password():
             history_entries = journal_store.get_history("2379.TW")
             
         if history_entries:
+            st.caption("理性理由與情緒記錄刻意分欄，方便事後對照、破解後見之明。")
             rows = []
             for entry in history_entries:
                 rows.append({
@@ -930,8 +932,9 @@ if check_password():
                 "操作類別",
                 [JournalAction.OBSERVE.value, JournalAction.BATCH_IN.value, JournalAction.BATCH_OUT.value, JournalAction.STOP_LOSS.value, JournalAction.STOP_GAIN.value]
             )
-            new_reason = st.text_area("理性理由 (例: 突破盤整均線 / 估值具吸引力)", value="")
-            new_emotion = st.text_input("當前情緒記錄 (例: 平靜 / 焦慮 / 追高亢奮)", value="")
+            st.caption("請分別誠實記錄「當下的理性判斷理由」與「當下真實的情緒感受」。兩者刻意分開，是為了事後對照、破解後見之明。")
+            new_reason = st.text_area("理性理由（當下判斷，不含事後合理化）", value="")
+            new_emotion = st.text_input("情緒感受（當下真實感受，例：平靜 / 焦慮 / 追高亢奮）", value="")
             new_ratio = st.slider("操作後部位比例 (0.0 ~ 1.0)", min_value=0.0, max_value=1.0, value=0.0, step=0.05)
             
             submit_button = st.form_submit_button("寫入投資日記")
@@ -968,10 +971,14 @@ if check_password():
             st.success("當前狀態: [已過交易冷卻期]，頭腦清醒。")
         else:
             st.error("當前狀態: [尚未過交易冷卻期]。")
-            st.warning("距離您上次對此標的產生交易衝動尚未滿 24 小時，建議先散步或離開螢幕 5-10 分鐘，平復情緒後再行審視。")
+            hours = get_agent_rules("discipline_agent")["cooldown_hours"]
+            st.warning(
+                f"距離您上次對此標的產生交易衝動尚未滿 {hours:g} 小時，建議先離線散步 10 分鐘，平復情緒後再行審視。"
+            )
             
         # 手動更新衝動時間戳記以測試
-        if st.button("記錄一次交易意圖（開始 24 小時交易冷卻）"):
+        hours = get_agent_rules("discipline_agent")["cooldown_hours"]
+        if st.button(f"記錄一次交易意圖（開始 {hours:g} 小時交易冷卻）"):
             cooldown_tracker.request_trade_intent(target_symbol)
             st.info("已記錄交易意圖，冷卻期開始重新計算。")
             st.rerun()

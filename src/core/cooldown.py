@@ -9,7 +9,10 @@ class CooldownTracker:
     def request_trade_intent(self, symbol: str) -> None:
         self.intents[symbol] = datetime.now()
 
-    def is_cooldown_passed(self, symbol: str, hours: float = 24.0) -> bool:
+    def is_cooldown_passed(self, symbol: str, hours: float = None) -> bool:
+        if hours is None:
+            from src.core.rule_config import get_agent_rules
+            hours = float(get_agent_rules("discipline_agent")["cooldown_hours"])
         last_intent = self.intents.get(symbol)
         if not last_intent:
             return True

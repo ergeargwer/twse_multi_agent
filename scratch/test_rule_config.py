@@ -13,8 +13,8 @@ from src.core import risk
 
 def test_load_rules_and_version():
     rules = load_rules(force_reload=True)
-    assert rules["version"] == "1.0.0"
-    assert get_rules_version() == "1.0.0"
+    assert rules["version"] == "1.1.0"
+    assert get_rules_version() == "1.1.0"
     fund = get_agent_rules("fundamental_agent")
     assert fund["pe_percentile_attractive_stdev"] == -0.5
     assert fund["pe_percentile_extreme_stdev"] == 3.0
@@ -181,6 +181,16 @@ def test_event_margin_bands_and_usd():
     print("ok event margin usd")
 
 
+def test_cooldown_hours_from_yaml():
+    from src.core.cooldown import CooldownTracker
+    tracker = CooldownTracker()
+    assert tracker.is_cooldown_passed("2330.TW") is True
+    tracker.request_trade_intent("2330.TW")
+    assert tracker.is_cooldown_passed("2330.TW") is False
+    assert tracker.is_cooldown_passed("2330.TW", hours=0.0) is True
+    print("ok cooldown yaml")
+
+
 def test_persona_builds_same_constraints():
     persona = load_persona(force_reload=True)
     prompt = build_system_prompt(False, "")
@@ -203,5 +213,6 @@ if __name__ == "__main__":
     test_all_phase2_agents_init()
     test_risk_veto_concentration_from_yaml()
     test_event_margin_bands_and_usd()
+    test_cooldown_hours_from_yaml()
     test_persona_builds_same_constraints()
     print("all rule/prompt config tests passed")

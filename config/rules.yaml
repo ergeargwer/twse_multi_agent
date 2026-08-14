@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.1.0"
 updated_at: "2026-08-14"
 
 fundamental_agent:
@@ -46,6 +46,7 @@ behavior_risk_agent:
 discipline_agent:
   emotional_lookback_entries: 5        # 檢視近期日記筆數
   emotional_trigger_count: 3           # 情緒關鍵字出現筆數達此值視為「傾向偏高」
+  cooldown_hours: 24.0                 # 交易冷卻時數
 
 event_agent:
   margin_call_warning_pct: 130.0           # 追繳線

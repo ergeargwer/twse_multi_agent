@@ -37,7 +37,7 @@ class DisciplineAgent:
         # 2. 整合交易冷卻提醒
         cooldown_reminder = ""
         if not cooldown_passed:
-            cooldown_reminder = "距離您上次對此標的產生交易衝動尚未滿一天，建議先散步或離開螢幕 5-10 分鐘"
+            cooldown_reminder = "距離您上次對此標的產生交易衝動尚未滿一天，建議先離線散步 10 分鐘"
 
         objective_findings = []
         objective_findings.append(
