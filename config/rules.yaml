@@ -1,11 +1,13 @@
-version: "1.0.0"
+version: "1.1.0"
 updated_at: "2026-08-14"
 
 fundamental_agent:
-  pe_attractive_multiplier: 1.5        # 本益比低於5年均值幾倍視為「估值具吸引力」
+  pe_percentile_attractive_stdev: -0.5 # 位階低於此標準差視為便宜具吸引力
+  pe_percentile_extreme_stdev: 3.0     # 位階高於此標準差觸發極端溢價警示
+  pe_high_threshold: 25                # 本益比高於此值視為「相對較高區間」
+  pe_low_threshold: 15                 # 本益比低於此值視為「相對較低區間」
+  peg_min_growth_pct: 15               # PEG=1 適用之最低成長率門檻
   revenue_achievement_min_ratio: 0.96  # 月營收達成率低於此比例視為「疑似價值陷阱」
-  pe_high_threshold: 20                # 本益比高於此值視為「相對較高區間」
-  pe_low_threshold: 10                 # 本益比低於此值視為「相對較低區間」
   revenue_growth_strong_pct: 10        # 月營收年增率達此值視為「雙位數成長」
 
 pricing_gatekeeper_agent:
@@ -16,10 +18,10 @@ pricing_gatekeeper_agent:
 
 risk_veto_agent:
   min_risk_reward_ratio: 3.0           # 風暴比安全底線（預期漲幅 / 可容忍停損）
-  max_position_concentration_pct: 0.30 # 單一標的占總資產上限
+  max_position_concentration_pct: 0.50 # 單一標的占總資產上限（方法論刻意放寬）
 
 asset_allocation_agent:
-  concentration_alert_pct: 0.30        # 觸發集中度警訊的門檻
+  concentration_alert_pct: 0.50        # 觸發集中度警訊的門檻，需與風控煞車一致
   position_step_small: 0.20            # 部位<=40%時建議調節幅度
   position_step_large: 0.10            # 部位>40%時建議調節幅度
   position_step_switch_pct: 0.40       # 切換兩種調節幅度的部位分界
@@ -37,14 +39,18 @@ technical_agent:
   top_signal_body_pct: 0.02            # 長黑K實體占收盤價比例門檻
 
 behavior_risk_agent:
-  vwap_dev_threshold_pct_default: 5.0  # VWAP乖離預設門檻（可被使用者輸入覆蓋）
+  ma20_oversold_dev_pct: -5.0          # 月線負乖離達此幅度視為超跌型態
+  ma20_extreme_oversold_dev_pct: -13.0 # 極端超跌型態門檻（歷史大盤跌深案例）
+  ma20_overbought_dev_pct: 5.0         # 月線正乖離達此幅度視為高追價（可被使用者輸入覆蓋）
 
 discipline_agent:
   emotional_lookback_entries: 5        # 檢視近期日記筆數
   emotional_trigger_count: 3           # 情緒關鍵字出現筆數達此值視為「傾向偏高」
+  cooldown_hours: 24.0                 # 交易冷卻時數
 
 event_agent:
-  margin_ratio_low: 140.0              # 融資維持率下限，落在區間視為「恐慌指標鈍化」
-  margin_ratio_high: 150.0             # 融資維持率上限
-  days_to_recall_alert: 10             # 距融券強制回補日少於此天數才提示
-  days_to_ex_div_alert: 30             # 距除權息日少於此天數才提示
+  margin_call_warning_pct: 130.0           # 追繳線
+  margin_ratio_bottom_signal_pct: 140.0    # 止穩打底參考值
+  margin_ratio_bottom_signal_band_pct: 5.0 # 140±5 視為打底區間
+  days_to_recall_alert: 10                 # 距融券強制回補日少於此天數才提示
+  days_to_ex_div_alert: 30                 # 距除權息日少於此天數才提示

@@ -186,7 +186,9 @@ def render_open_source_panel(bundle: Dict[str, Any], key_prefix: str) -> None:
 
 
 RULE_FIELD_LABELS = {
-    "pe_attractive_multiplier": "本益比低於5年均值幾倍視為「估值具吸引力」",
+    "pe_percentile_attractive_stdev": "本益比位階低於此標準差視為便宜具吸引力",
+    "pe_percentile_extreme_stdev": "本益比位階高於此標準差觸發極端溢價警示",
+    "peg_min_growth_pct": "PEG 估值法適用的最低年增率門檻",
     "revenue_achievement_min_ratio": "月營收達成率低於此比例視為「疑似價值陷阱」",
     "pe_high_threshold": "本益比高於此值視為「相對較高區間」",
     "pe_low_threshold": "本益比低於此值視為「相對較低區間」",
@@ -209,11 +211,15 @@ RULE_FIELD_LABELS = {
     "bottom_signal_shadow_ratio": "長下影線相對實體倍數",
     "top_signal_volume_multiplier": "創高爆量倍數門檻",
     "top_signal_body_pct": "長黑K實體占收盤價比例門檻",
-    "vwap_dev_threshold_pct_default": "VWAP 乖離預設門檻（可被使用者輸入覆蓋）",
+    "ma20_oversold_dev_pct": "月線負乖離達此幅度視為超跌型態",
+    "ma20_extreme_oversold_dev_pct": "月線極端負乖離型態門檻",
+    "ma20_overbought_dev_pct": "月線正乖離達此幅度視為高追價（可被使用者輸入覆蓋）",
     "emotional_lookback_entries": "檢視近期日記筆數",
     "emotional_trigger_count": "情緒關鍵字出現筆數達此值視為「傾向偏高」",
-    "margin_ratio_low": "融資維持率下限",
-    "margin_ratio_high": "融資維持率上限",
+    "cooldown_hours": "交易冷卻時數",
+    "margin_call_warning_pct": "融資維持率追繳線",
+    "margin_ratio_bottom_signal_pct": "融資維持率止穩打底參考值",
+    "margin_ratio_bottom_signal_band_pct": "止穩判斷帶寬（參考值加減此值）",
     "days_to_recall_alert": "距融券強制回補日少於此天數才提示",
     "days_to_ex_div_alert": "距除權息日少於此天數才提示",
 }
@@ -320,35 +326,38 @@ def render_behavior_risk_panel(
     raw_history: List[Dict[str, Any]],
     symbol: str,
     key_prefix: str,
-    default_vwap: float = 5.0,
+    default_ma20_dev: float = 5.0,
 ) -> None:
-    """可調 VWAP 閾值重算行為風險圖與近期事件表。"""
+    """可調月線乖離門檻重算行為風險圖與近期事件表。"""
     st.warning("所有分析僅為市場行為風險提示，非投資建議，非主力判斷。")
     if not raw_history:
         st.info("尚無日線價量。請先執行 Pipeline，或在本頁以「只抓價量」取得資料。")
         return
 
-    vwap_dev = st.slider(
-        "高追價：VWAP 乖離率閾值 (%)",
+    ma20_dev = st.slider(
+        "高追價：月線乖離門檻 (%)",
         min_value=1.0,
         max_value=15.0,
-        value=float(default_vwap),
+        value=float(default_ma20_dev),
         step=0.5,
-        key=f"{key_prefix}_vwap",
+        key=f"{key_prefix}_ma20",
     )
-    result = run_behavior_risk(raw_history, vwap_dev_threshold_pct=vwap_dev)
+    result = run_behavior_risk(raw_history, ma20_dev_threshold_pct=ma20_dev)
     signal = result["signal"]
     if signal == "高追價風險":
         st.error(f"最新行為標記：{signal}。{result['latest_risk_reason']}")
+    elif signal in ("月線極端負乖離型態", "月線負乖離型態"):
+        st.warning(f"最新行為標記：{signal}。{result['latest_risk_reason']}")
     elif signal == "低殺出風險":
         st.warning(f"最新行為標記：{signal}。{result['latest_risk_reason']}")
     else:
         st.success(f"最新行為標記：{signal}")
 
-    cols = st.columns(3)
+    cols = st.columns(4)
     cols[0].metric("分析根數", result["bars_analyzed"])
     cols[1].metric("高追價筆數", result["high_chase_count"])
     cols[2].metric("低殺出筆數", result["low_sell_count"])
+    cols[3].metric("極端負乖離", result.get("extreme_oversold_count", 0))
 
     if result["frame"] is not None and not result["frame"].empty:
         st.plotly_chart(
@@ -629,7 +638,7 @@ if check_password():
             symbol = col1.text_input("請輸入股票代號 (例: 2379.TW)", value="2379.TW", key="new_report_symbol")
             expected_gain = col2.number_input("預期漲幅 (%)", min_value=1.0, max_value=200.0, value=30.0, step=1.0, key="new_report_gain")
             max_loss = col3.number_input("可容忍停損 (%)", min_value=1.0, max_value=100.0, value=10.0, step=1.0, key="new_report_loss")
-            vwap_threshold = col4.number_input("VWAP 乖離閾值 (%)", min_value=1.0, max_value=15.0, value=5.0, step=0.5, key="new_report_vwap")
+            vwap_threshold = col4.number_input("月線乖離門檻 (%)", min_value=1.0, max_value=15.0, value=5.0, step=0.5, key="new_report_ma20")
             
             if st.button("開始執行 Pipeline 分析", key="run_pipeline_btn"):
                 task_id = str(uuid.uuid4())
@@ -646,7 +655,7 @@ if check_password():
                         context = pipeline.execute_all(
                             expected_gain_pct=expected_gain,
                             max_loss_pct=max_loss,
-                            vwap_dev_threshold_pct=vwap_threshold,
+                            ma20_dev_threshold_pct=vwap_threshold,
                         )
                         st.session_state["last_analysis_task_id"] = task_id
                         st.session_state["last_analysis_symbol"] = symbol
@@ -654,7 +663,7 @@ if check_password():
                         st.session_state["last_price_history"] = (
                             (ingested.get("price_action") or {}).get("raw_history") or []
                         )
-                        st.session_state["last_vwap_threshold"] = vwap_threshold
+                        st.session_state["last_ma20_threshold"] = vwap_threshold
                         st.session_state["last_open_source"] = ingested.get("open_source_events") or {}
                         synthesis_report = context.read("synthesis_report")
                         pricing_report = context.read("pricing_keeper_report") or context.read("pricing_gatekeeper_report") or {}
@@ -707,7 +716,7 @@ if check_password():
                             st.session_state.get("last_price_history") or [],
                             symbol,
                             key_prefix="new_run_risk",
-                            default_vwap=vwap_threshold,
+                            default_ma20_dev=vwap_threshold,
                         )
                         
                         # 顯示 synthesizer 產出的報告
@@ -740,7 +749,7 @@ if check_password():
                     last_hist,
                     last_sym,
                     key_prefix="last_run_risk",
-                    default_vwap=float(st.session_state.get("last_vwap_threshold", 5.0)),
+                    default_ma20_dev=float(st.session_state.get("last_ma20_threshold", 5.0)),
                 )
                 st.write("### 各 Agent 結果（修改功能時可對照）")
                 render_agent_reports(last_tid, key_prefix="last_run")
@@ -842,7 +851,7 @@ if check_password():
 
             selected_symbol = last_sym
             selected_history = last_hist
-            selected_vwap = float(st.session_state.get("last_vwap_threshold", 5.0))
+            selected_vwap = float(st.session_state.get("last_ma20_threshold", 5.0))
 
             if source == "從歷史任務載入":
                 history_for_risk = get_report_history(require_llm=False)
@@ -877,7 +886,7 @@ if check_password():
                 selected_history,
                 selected_symbol,
                 key_prefix="tab5_risk",
-                default_vwap=selected_vwap,
+                default_ma20_dev=selected_vwap,
             )
 
         with tab6:
@@ -898,6 +907,7 @@ if check_password():
             history_entries = journal_store.get_history("2379.TW")
             
         if history_entries:
+            st.caption("理性理由與情緒記錄刻意分欄，方便事後對照、破解後見之明。")
             rows = []
             for entry in history_entries:
                 rows.append({
@@ -922,8 +932,9 @@ if check_password():
                 "操作類別",
                 [JournalAction.OBSERVE.value, JournalAction.BATCH_IN.value, JournalAction.BATCH_OUT.value, JournalAction.STOP_LOSS.value, JournalAction.STOP_GAIN.value]
             )
-            new_reason = st.text_area("理性理由 (例: 突破盤整均線 / 估值具吸引力)", value="")
-            new_emotion = st.text_input("當前情緒記錄 (例: 平靜 / 焦慮 / 追高亢奮)", value="")
+            st.caption("請分別誠實記錄「當下的理性判斷理由」與「當下真實的情緒感受」。兩者刻意分開，是為了事後對照、破解後見之明。")
+            new_reason = st.text_area("理性理由（當下判斷，不含事後合理化）", value="")
+            new_emotion = st.text_input("情緒感受（當下真實感受，例：平靜 / 焦慮 / 追高亢奮）", value="")
             new_ratio = st.slider("操作後部位比例 (0.0 ~ 1.0)", min_value=0.0, max_value=1.0, value=0.0, step=0.05)
             
             submit_button = st.form_submit_button("寫入投資日記")
@@ -960,10 +971,14 @@ if check_password():
             st.success("當前狀態: [已過交易冷卻期]，頭腦清醒。")
         else:
             st.error("當前狀態: [尚未過交易冷卻期]。")
-            st.warning("距離您上次對此標的產生交易衝動尚未滿 24 小時，建議先散步或離開螢幕 5-10 分鐘，平復情緒後再行審視。")
+            hours = get_agent_rules("discipline_agent")["cooldown_hours"]
+            st.warning(
+                f"距離您上次對此標的產生交易衝動尚未滿 {hours:g} 小時，建議先離線散步 10 分鐘，平復情緒後再行審視。"
+            )
             
         # 手動更新衝動時間戳記以測試
-        if st.button("記錄一次交易意圖（開始 24 小時交易冷卻）"):
+        hours = get_agent_rules("discipline_agent")["cooldown_hours"]
+        if st.button(f"記錄一次交易意圖（開始 {hours:g} 小時交易冷卻）"):
             cooldown_tracker.request_trade_intent(target_symbol)
             st.info("已記錄交易意圖，冷卻期開始重新計算。")
             st.rerun()

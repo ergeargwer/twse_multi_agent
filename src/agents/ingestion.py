@@ -205,6 +205,7 @@ class DataIngestionAgent:
             "monthly_revenue_growth_yoy": None,
             "pe_ratio": None,
             "pe_ratio_5y_avg": None,
+            "pe_ratio_5y_stdev": None,
             "latest_revenue": None,
             "last_year_revenue": None
         }
@@ -247,7 +248,13 @@ class DataIngestionAgent:
             # Calculate 5-year average (only count positive PEs)
             pe_vals = [row.get("PER", 0) for row in pe_data if row.get("PER", 0) > 0]
             if pe_vals:
-                result["pe_ratio_5y_avg"] = round(sum(pe_vals) / len(pe_vals), 2)
+                mean_pe = sum(pe_vals) / len(pe_vals)
+                result["pe_ratio_5y_avg"] = round(mean_pe, 2)
+                if len(pe_vals) >= 2:
+                    variance = sum((value - mean_pe) ** 2 for value in pe_vals) / (len(pe_vals) - 1)
+                    result["pe_ratio_5y_stdev"] = round(variance ** 0.5, 2)
+                else:
+                    result["pe_ratio_5y_stdev"] = None
 
         return result
 
@@ -302,6 +309,47 @@ class DataIngestionAgent:
                             break
                     except Exception:
                         pass
+        return result
+
+    def fetch_usd_index_signal(self) -> Dict[str, Any]:
+        """美元指數（ICE DXY），不是美元兌台幣。FRED 需金鑰，改用 Yahoo DX-Y.NYB。"""
+        result = {
+            "usd_index_20d_high": None,
+            "usd_index_latest": None,
+            "usd_index_data_source": "",
+            "usd_index_error": "",
+        }
+        if not self.is_active:
+            return result
+
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?interval=1d&range=2mo"
+        try:
+            response = requests.get(
+                url,
+                timeout=10,
+                headers={"User-Agent": "twse-multi-agent/usd-index"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            series = ((payload.get("chart") or {}).get("result") or [None])[0]
+            if not series:
+                result["usd_index_error"] = "Yahoo 回傳不含 DX-Y.NYB 序列"
+                return result
+            closes = ((series.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+            values = [float(item) for item in closes if item is not None]
+            if len(values) < 20:
+                result["usd_index_error"] = f"美元指數有效收盤僅 {len(values)} 筆，不足 20 日"
+                result["usd_index_data_source"] = "Yahoo Finance DX-Y.NYB"
+                if values:
+                    result["usd_index_latest"] = values[-1]
+                return result
+            window = values[-20:]
+            latest = window[-1]
+            result["usd_index_latest"] = latest
+            result["usd_index_20d_high"] = latest >= max(window)
+            result["usd_index_data_source"] = "Yahoo Finance DX-Y.NYB (ICE Dollar Index)"
+        except Exception as exc:
+            result["usd_index_error"] = str(exc)
         return result
 
     def close(self):

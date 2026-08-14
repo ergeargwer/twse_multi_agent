@@ -21,16 +21,25 @@ class EventCalendarAgent:
         margin_maintenance_ratio = events_data.get("margin_maintenance_ratio")
         has_large_buyback = events_data.get("has_large_buyback")
         
-        margin_low = self.rules["margin_ratio_low"]
-        margin_high = self.rules["margin_ratio_high"]
+        call_pct = self.rules["margin_call_warning_pct"]
+        bottom_pct = self.rules["margin_ratio_bottom_signal_pct"]
+        band_pct = self.rules["margin_ratio_bottom_signal_band_pct"]
         recall_days = self.rules["days_to_recall_alert"]
         ex_div_days = self.rules["days_to_ex_div_alert"]
         margin_ratio_signal = "無明顯訊號"
         if margin_maintenance_ratio is not None:
-            if margin_low <= margin_maintenance_ratio <= margin_high:
+            if margin_maintenance_ratio <= call_pct:
+                margin_ratio_signal = "追繳警戒"
+            elif abs(margin_maintenance_ratio - bottom_pct) <= band_pct:
                 margin_ratio_signal = "恐慌指標鈍化"
         else:
             margin_ratio_signal = "資料源待補"
+
+        usd_index_signal = "無明顯訊號"
+        if ingested_data.get("usd_index_20d_high") is True:
+            usd_index_signal = "外資撤離資金抽離警訊"
+        elif ingested_data.get("usd_index_20d_high") is None and ingested_data.get("usd_index_error"):
+            usd_index_signal = "資料源待補"
             
         buyback_signal = "無明顯訊號"
         if has_large_buyback is not None:
@@ -51,9 +60,22 @@ class EventCalendarAgent:
         else:
             objective_findings.append("短期內未見重大 ETF 季配/半年配換股審核重疊風險。")
             
-        if margin_ratio_signal == "恐慌指標鈍化":
+        if margin_ratio_signal == "追繳警戒":
             objective_findings.append(
-                f"融資維持率落在 {margin_low:.0f}%-{margin_high:.0f}% 區間止穩，恐慌指標鈍化。"
+                f"融資維持率跌破{call_pct:.0f}%追繳線，需留意斷頭賣壓。"
+            )
+        elif margin_ratio_signal == "恐慌指標鈍化":
+            objective_findings.append(
+                f"融資維持率落於{bottom_pct:.0f}%附近止穩，市場多殺多踐踏可能已近尾聲。"
+            )
+        if usd_index_signal == "外資撤離資金抽離警訊":
+            source = ingested_data.get("usd_index_data_source") or "美元指數"
+            latest = ingested_data.get("usd_index_latest")
+            extra = f"（最新 {latest:.2f}，來源 {source}）" if latest is not None else f"（來源 {source}）"
+            objective_findings.append(f"美元指數創20日新高{extra}，需留意外資資金撤離風險。")
+        elif usd_index_signal == "資料源待補":
+            objective_findings.append(
+                f"美元指數未能取得（{ingested_data.get('usd_index_error')}），不使用替代匯率冒充。"
             )
         if buyback_signal == "信心指標浮現":
             objective_findings.append("大型公司宣布庫藏股，信心指標浮現。")
@@ -94,6 +116,7 @@ class EventCalendarAgent:
                 "days_to_ex_dividend",
                 "in_etf_rebalance_watchlist",
                 "open_source_events",
+                "usd_index_20d_high",
             ],
             "objective_findings": objective_findings,
             "summary": (
@@ -103,6 +126,7 @@ class EventCalendarAgent:
                 "嚴格禁止對事件發生後之價格方向、漲跌幅度做任何推測。"
             ),
             "margin_ratio_signal": margin_ratio_signal,
+            "usd_index_signal": usd_index_signal,
             "buyback_signal": buyback_signal,
             "open_source_signal": open_source_signal,
             "open_source_status": cli_status,

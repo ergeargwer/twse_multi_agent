@@ -34,7 +34,7 @@ class DecisionSynthesizerAgent:
         if cooldown_tracker:
             cooldown_passed = cooldown_tracker.is_cooldown_passed(symbol)
             if not cooldown_passed:
-                cooldown_warning = "距離您上次對此標的產生交易衝動尚未滿一天，建議先散步或離開螢幕 5-10 分鐘"
+                cooldown_warning = "距離您上次對此標的產生交易衝動尚未滿一天，建議先離線散步 10 分鐘"
             # 記錄本次交易意圖
             cooldown_tracker.request_trade_intent(symbol)
             

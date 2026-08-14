@@ -66,6 +66,8 @@ def create_risk_chart(df: pd.DataFrame, stock_id: str) -> go.Figure:
     if "Risk_Type" in df.columns:
         df_chase = df[df["Risk_Type"] == "High Chase"]
         df_sell = df[df["Risk_Type"] == "Low Sell"]
+        df_extreme = df[df["Risk_Type"] == "Extreme Oversold"]
+        df_oversold = df[df["Risk_Type"] == "Oversold"]
         if not df_chase.empty:
             fig.add_trace(
                 go.Scatter(
@@ -90,6 +92,34 @@ def create_risk_chart(df: pd.DataFrame, stock_id: str) -> go.Figure:
                     name="低殺出風險",
                     text=df_sell["Risk_Reason"],
                     hovertemplate="<b>低殺出風險</b><br>%{text}<br>價格: %{y:.2f}<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+        if not df_extreme.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_extreme["Date"],
+                    y=df_extreme["Low"] * 0.985,
+                    mode="markers",
+                    marker=dict(symbol="diamond", color="#1e3c72", size=11),
+                    name="月線極端負乖離型態",
+                    text=df_extreme["Risk_Reason"],
+                    hovertemplate="<b>月線極端負乖離型態</b><br>%{text}<br>價格: %{y:.2f}<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+        if not df_oversold.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_oversold["Date"],
+                    y=df_oversold["Low"] * 0.99,
+                    mode="markers",
+                    marker=dict(symbol="circle-open", color="#64748b", size=10),
+                    name="月線負乖離型態",
+                    text=df_oversold["Risk_Reason"],
+                    hovertemplate="<b>月線負乖離型態</b><br>%{text}<br>價格: %{y:.2f}<extra></extra>",
                 ),
                 row=1,
                 col=1,
