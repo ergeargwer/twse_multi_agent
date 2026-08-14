@@ -21,6 +21,14 @@ from src.core.cooldown import CooldownTracker
 from src.trace import visualizer as visualizer_mod
 from src.analysis.behavior_risk import run_behavior_risk
 from src.ui.risk_chart import create_risk_chart
+from src.core.rule_config import (
+    get_agent_rules,
+    get_rules_path,
+    get_rules_updated_at,
+    get_rules_version,
+    load_rules,
+)
+from src.core.prompt_config import get_persona_path, get_persona_version, load_persona
 
 importlib.reload(visualizer_mod)
 TraceVisualizer = visualizer_mod.TraceVisualizer
@@ -175,6 +183,122 @@ def render_open_source_panel(bundle: Dict[str, Any], key_prefix: str) -> None:
             "URL": item.get("url") or "",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, key=f"{key_prefix}_os_table")
+
+
+RULE_FIELD_LABELS = {
+    "pe_attractive_multiplier": "本益比低於5年均值幾倍視為「估值具吸引力」",
+    "revenue_achievement_min_ratio": "月營收達成率低於此比例視為「疑似價值陷阱」",
+    "pe_high_threshold": "本益比高於此值視為「相對較高區間」",
+    "pe_low_threshold": "本益比低於此值視為「相對較低區間」",
+    "revenue_growth_strong_pct": "月營收年增率達此值視為「雙位數成長」",
+    "overbought_price_vs_ma20_pct": "價格高於20MA幾倍視為偏離",
+    "overbought_pe_vs_5y_avg_pct": "本益比高於5年均值幾倍視為偏高",
+    "oversold_pe_vs_5y_avg_pct": "本益比低於5年均值幾倍視為偏低",
+    "oversold_price_vs_ma60_pct": "價格低於60MA幾倍視為「利空未反映」",
+    "min_risk_reward_ratio": "風暴比安全底線（預期漲幅 / 可容忍停損）",
+    "max_position_concentration_pct": "單一標的占總資產上限",
+    "concentration_alert_pct": "觸發集中度警訊的門檻",
+    "position_step_small": "部位小於等於分界時建議調節幅度",
+    "position_step_large": "部位大於分界時建議調節幅度",
+    "position_step_switch_pct": "切換兩種調節幅度的部位分界",
+    "reversal_min_sell_amount": "資金轉向警訊：連兩日賣超絕對值門檻",
+    "reversal_sell_vs_buy_ratio": "或賣超金額達前期買超此比例",
+    "kd_period": "KD 指標週期參數",
+    "bottom_signal_prior_drop_pct": "判定「大跌後」的收盤價比較基準",
+    "bottom_signal_volume_multiplier": "單日爆量倍數門檻",
+    "bottom_signal_shadow_ratio": "長下影線相對實體倍數",
+    "top_signal_volume_multiplier": "創高爆量倍數門檻",
+    "top_signal_body_pct": "長黑K實體占收盤價比例門檻",
+    "vwap_dev_threshold_pct_default": "VWAP 乖離預設門檻（可被使用者輸入覆蓋）",
+    "emotional_lookback_entries": "檢視近期日記筆數",
+    "emotional_trigger_count": "情緒關鍵字出現筆數達此值視為「傾向偏高」",
+    "margin_ratio_low": "融資維持率下限",
+    "margin_ratio_high": "融資維持率上限",
+    "days_to_recall_alert": "距融券強制回補日少於此天數才提示",
+    "days_to_ex_div_alert": "距除權息日少於此天數才提示",
+}
+
+AGENT_SECTION_TITLES = {
+    "fundamental_agent": "基本面 Agent",
+    "pricing_gatekeeper_agent": "定價把關 Agent",
+    "risk_veto_agent": "風控煞車 Agent",
+    "asset_allocation_agent": "資產配置 Agent",
+    "institutional_flow_agent": "法人籌碼 Agent",
+    "technical_agent": "技術面 Agent",
+    "behavior_risk_agent": "行為風險 Agent",
+    "discipline_agent": "執行紀律 Agent",
+    "event_agent": "制度事件 Agent",
+}
+
+
+def render_system_settings_panel() -> None:
+    st.write("### 系統設定（唯讀）")
+    st.info(
+        "如需調整數值，請編輯 `config/rules.yaml` 或 `config/prompts/synthesizer_persona_v1.yaml` 後重新啟動系統。"
+        "可編輯介面規劃於下一階段。"
+    )
+    try:
+        rules = load_rules()
+        rules_path = get_rules_path()
+        st.write(
+            f"**規則版本**：`{get_rules_version()}`　"
+            f"**更新日期**：`{get_rules_updated_at()}`　"
+            f"**檔案**：`{rules_path}`"
+        )
+        rows = []
+        for agent_key, title in AGENT_SECTION_TITLES.items():
+            block = rules.get(agent_key)
+            if not isinstance(block, dict):
+                continue
+            for field, value in block.items():
+                rows.append({
+                    "Agent": title,
+                    "欄位": field,
+                    "數值": value,
+                    "說明": RULE_FIELD_LABELS.get(field, ""),
+                })
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.download_button(
+            label="下載規則原始檔 rules.yaml",
+            data=rules_path.read_text(encoding="utf-8"),
+            file_name="rules.yaml",
+            mime="text/yaml",
+            key="dl_rules_yaml",
+        )
+    except Exception as exc:
+        st.error(f"無法載入規則設定檔：{exc}")
+
+    st.write("---")
+    try:
+        persona = load_persona()
+        prompt_path = get_persona_path()
+        st.write(
+            f"**Prompt 人設版本**：`{get_persona_version()}`　"
+            f"**名稱**：`{persona.get('name', '')}`　"
+            f"**更新日期**：`{persona.get('updated_at', '')}`"
+        )
+        st.write("**人設全文**")
+        st.text_area(
+            "persona_intro",
+            value=str(persona.get("persona_intro") or ""),
+            height=220,
+            disabled=True,
+            label_visibility="collapsed",
+            key="persona_intro_view",
+        )
+        st.write("**輸出限制**")
+        for index, item in enumerate(persona.get("output_constraints") or [], start=1):
+            st.write(f"{index}. {item}")
+        st.download_button(
+            label="下載 Prompt 原始檔 synthesizer_persona_v1.yaml",
+            data=prompt_path.read_text(encoding="utf-8"),
+            file_name="synthesizer_persona_v1.yaml",
+            mime="text/yaml",
+            key="dl_persona_yaml",
+        )
+    except Exception as exc:
+        st.error(f"無法載入 Prompt 人設檔：{exc}")
 
 
 def load_price_history_from_task(task_id: str) -> List[Dict[str, Any]]:
@@ -478,18 +602,27 @@ if check_password():
             for k, v in chart_data.items():
                 if k != "現金":
                     ratio = v / total_assets
-                    if ratio > 0.30:
-                        st.error(f"警訊：單一標的 {k} 占比達 {ratio*100:.2f}%，已超出 30.0% 的安全限制，請調整資產配置以防禦未知風險。")
+                    alert_pct = get_agent_rules("asset_allocation_agent")["concentration_alert_pct"]
+                    if ratio > alert_pct:
+                        st.error(
+                            f"警訊：單一標的 {k} 占比達 {ratio*100:.2f}%，"
+                            f"已超出 {alert_pct*100:.1f}% 的安全限制，請調整資產配置以防禦未知風險。"
+                        )
                         has_alert = True
             if not has_alert:
-                st.success("所有標的部位比例皆符合單一持股低於 30.0% 的風控安全指標。")
+                alert_pct = get_agent_rules("asset_allocation_agent")["concentration_alert_pct"]
+                st.success(
+                    f"所有標的部位比例皆符合單一持股低於 {alert_pct*100:.1f}% 的風控安全指標。"
+                )
 
     # 2. 個股分析報告
     elif page == "個股分析報告":
         st.title("個股分析報告")
         st.write("藉由多 Agent 平行盲測與修行者決策機制，進行情境推演。")
         
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["新增分析推演", "歷史報告查詢", "分析流程", "Agent 報告", "行為風險"])
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+            ["新增分析推演", "歷史報告查詢", "分析流程", "Agent 報告", "行為風險", "系統設定"]
+        )
         
         with tab1:
             col1, col2, col3, col4 = st.columns(4)
@@ -746,6 +879,9 @@ if check_password():
                 key_prefix="tab5_risk",
                 default_vwap=selected_vwap,
             )
+
+        with tab6:
+            render_system_settings_panel()
 
     # 3. 投資日記
     elif page == "投資日記":

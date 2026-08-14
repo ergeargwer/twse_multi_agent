@@ -1,8 +1,12 @@
 from typing import Dict, Any
 
+from src.core.rule_config import get_agent_rules
+
+
 class TechnicalAgent:
     def __init__(self):
         self.is_active = True
+        self.rules = get_agent_rules("technical_agent")
         
     def analyze(self, ingested_data: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_active:
@@ -21,20 +25,26 @@ class TechnicalAgent:
         top_reversal_signal = "無明顯訊號"
         
         if len(raw_history) >= 30:
+            kd_period = int(self.rules["kd_period"])
+            kd_warmup = kd_period - 1
+            prior_drop = self.rules["bottom_signal_prior_drop_pct"]
+            vol_mult = self.rules["bottom_signal_volume_multiplier"]
+            shadow_ratio = self.rules["bottom_signal_shadow_ratio"]
+            top_vol_mult = self.rules["top_signal_volume_multiplier"]
+            top_body_pct = self.rules["top_signal_body_pct"]
             # 1. Calculate KD
             k_vals = []
             d_vals = []
             k_curr = 50.0
             d_curr = 50.0
             for i in range(len(raw_history)):
-                if i < 8:
+                if i < kd_warmup:
                     k_vals.append(50.0)
                     d_vals.append(50.0)
                     continue
-                # Get past 9 days
-                past_9 = raw_history[i-8:i+1]
-                highs = [x["high"] for x in past_9]
-                lows = [x["low"] for x in past_9]
+                past_n = raw_history[i - kd_warmup:i + 1]
+                highs = [x["high"] for x in past_n]
+                lows = [x["low"] for x in past_n]
                 close_t = raw_history[i]["close"]
                 max_high = max(highs)
                 min_low = min(lows)
@@ -51,18 +61,18 @@ class TechnicalAgent:
             n = len(raw_history)
             for i in range(max(20, n - 13), n - 3):
                 # 大跌後
-                if raw_history[i]["close"] >= raw_history[i-10]["close"] * 0.92:
+                if raw_history[i]["close"] >= raw_history[i-10]["close"] * prior_drop:
                     continue
                 # 單日爆量
                 prev_20_vols = [x["volume"] for x in raw_history[i-20:i]]
                 avg_vol = sum(prev_20_vols) / len(prev_20_vols) if prev_20_vols else 1
-                if raw_history[i]["volume"] <= 3.0 * avg_vol:
+                if raw_history[i]["volume"] <= vol_mult * avg_vol:
                     continue
                 # 收紅K或長下影線
                 is_red = raw_history[i]["close"] > raw_history[i]["open"]
                 body = abs(raw_history[i]["close"] - raw_history[i]["open"])
                 lower_shadow = min(raw_history[i]["open"], raw_history[i]["close"]) - raw_history[i]["low"]
-                is_long_lower_shadow = lower_shadow > 2.0 * body if body > 0 else lower_shadow > 0.01 * raw_history[i]["close"]
+                is_long_lower_shadow = lower_shadow > shadow_ratio * body if body > 0 else lower_shadow > 0.01 * raw_history[i]["close"]
                 if not (is_red or is_long_lower_shadow):
                     continue
                 # 後續 3 天量縮不破底
@@ -94,8 +104,8 @@ class TechnicalAgent:
                 highest_high = max(x["high"] for x in past_20)
                 if raw_history[i]["close"] >= highest_close or raw_history[i]["high"] >= highest_high:
                     avg_vol = sum(x["volume"] for x in past_20) / 20.0
-                    if raw_history[i]["volume"] > 2.5 * avg_vol:
-                        if raw_history[i]["open"] - raw_history[i]["close"] > 0.02 * raw_history[i]["close"]:
+                    if raw_history[i]["volume"] > top_vol_mult * avg_vol:
+                        if raw_history[i]["open"] - raw_history[i]["close"] > top_body_pct * raw_history[i]["close"]:
                             top_reversal_signal = "高點防守訊號"
                             found_top = True
                             break

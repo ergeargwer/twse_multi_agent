@@ -1,8 +1,12 @@
 from typing import Dict, Any
 
+from src.core.rule_config import get_agent_rules
+
+
 class InstitutionalFlowAgent:
     def __init__(self):
         self.is_active = True
+        self.rules = get_agent_rules("institutional_flow_agent")
         
     def analyze(self, ingested_data: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_active:
@@ -28,7 +32,9 @@ class InstitutionalFlowAgent:
             sum_preceding_buy = sum(x.get("foreign_investor_net", 0) for x in preceding_days)
             
             if last_2_sell and preceding_buys >= 2 and sum_preceding_buy > 0:
-                if sum_last_2_sell < -1000000 or abs(sum_last_2_sell) > 0.5 * sum_preceding_buy:
+                min_sell = self.rules["reversal_min_sell_amount"]
+                sell_ratio = self.rules["reversal_sell_vs_buy_ratio"]
+                if sum_last_2_sell < -min_sell or abs(sum_last_2_sell) > sell_ratio * sum_preceding_buy:
                     foreign_flow_reversal_signal = "資金轉向警訊"
 
         objective_findings = []

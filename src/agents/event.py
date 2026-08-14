@@ -1,8 +1,12 @@
 from typing import Any, Dict, List
 
+from src.core.rule_config import get_agent_rules
+
+
 class EventCalendarAgent:
     def __init__(self):
         self.is_active = True
+        self.rules = get_agent_rules("event_agent")
         
     def analyze(self, ingested_data: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_active:
@@ -17,9 +21,13 @@ class EventCalendarAgent:
         margin_maintenance_ratio = events_data.get("margin_maintenance_ratio")
         has_large_buyback = events_data.get("has_large_buyback")
         
+        margin_low = self.rules["margin_ratio_low"]
+        margin_high = self.rules["margin_ratio_high"]
+        recall_days = self.rules["days_to_recall_alert"]
+        ex_div_days = self.rules["days_to_ex_div_alert"]
         margin_ratio_signal = "無明顯訊號"
         if margin_maintenance_ratio is not None:
-            if 140.0 <= margin_maintenance_ratio <= 150.0:
+            if margin_low <= margin_maintenance_ratio <= margin_high:
                 margin_ratio_signal = "恐慌指標鈍化"
         else:
             margin_ratio_signal = "資料源待補"
@@ -32,10 +40,10 @@ class EventCalendarAgent:
             buyback_signal = "資料源待補"
 
         objective_findings = []
-        if days_to_recall > 0 and days_to_recall <= 10:
+        if days_to_recall > 0 and days_to_recall <= recall_days:
             objective_findings.append(f"距離融券最後強制回補日僅剩 {days_to_recall} 日，需留意空單強迫買進之制度性軋空/買盤現象。")
         
-        if days_to_ex_div > 0 and days_to_ex_div <= 30:
+        if days_to_ex_div > 0 and days_to_ex_div <= ex_div_days:
             objective_findings.append(f"距離除權息交易日約 {days_to_ex_div} 日，可能面臨高殖利率參與買盤或持股避稅棄息賣壓之換手。")
             
         if etf_rebalance:
@@ -44,7 +52,9 @@ class EventCalendarAgent:
             objective_findings.append("短期內未見重大 ETF 季配/半年配換股審核重疊風險。")
             
         if margin_ratio_signal == "恐慌指標鈍化":
-            objective_findings.append("融資維持率落在 140%-150% 區間止穩，恐慌指標鈍化。")
+            objective_findings.append(
+                f"融資維持率落在 {margin_low:.0f}%-{margin_high:.0f}% 區間止穩，恐慌指標鈍化。"
+            )
         if buyback_signal == "信心指標浮現":
             objective_findings.append("大型公司宣布庫藏股，信心指標浮現。")
 
