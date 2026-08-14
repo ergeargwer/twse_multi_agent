@@ -18,10 +18,10 @@ pricing_gatekeeper_agent:
 
 risk_veto_agent:
   min_risk_reward_ratio: 3.0           # 風暴比安全底線（預期漲幅 / 可容忍停損）
-  max_position_concentration_pct: 0.30 # 單一標的占總資產上限
+  max_position_concentration_pct: 0.50 # 單一標的占總資產上限（方法論刻意放寬）
 
 asset_allocation_agent:
-  concentration_alert_pct: 0.30        # 觸發集中度警訊的門檻
+  concentration_alert_pct: 0.50        # 觸發集中度警訊的門檻，需與風控煞車一致
   position_step_small: 0.20            # 部位<=40%時建議調節幅度
   position_step_large: 0.10            # 部位>40%時建議調節幅度
   position_step_switch_pct: 0.40       # 切換兩種調節幅度的部位分界

@@ -90,6 +90,19 @@ def test_risk_veto_concentration_from_yaml():
         ],
     })
     assert report["veto"] is False
+    # 50% 門檻：占比 50% 剛好不否決，超過才否決
+    over = agent.analyze({
+        "account_data_status": "ok",
+        "symbol": "2330.TW",
+        "expected_gain_pct": 30.0,
+        "max_loss_pct": 10.0,
+        "account_balance": {"cash": 400000.0},
+        "position_list": [
+            {"symbol": "2330", "cost": 600000.0, "unrealized_pnl": 0.0},
+        ],
+    })
+    assert over["veto"] is True
+    assert "50.0%" in over["veto_reason"]
     agent.close()
 
     profile = risk.calculate_risk_reward(30.0, 10.0)
