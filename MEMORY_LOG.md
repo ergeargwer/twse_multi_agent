@@ -26,6 +26,11 @@
 - Event Agent 讀 `open_source_events`；`CLI_COLLECT_ENABLED=0` 可關
 - 測試：`scratch/test_cli_collectors.py`
 
+### 人設 1.1.0 與 Agent 參數
+
+- Prompt：`config/prompts/synthesizer_persona_v1.yaml` version **1.1.0**
+- 規則：`config/rules.yaml` version **1.1.0**（PE z-score、月線乖離、集中度 50%、融資雙線、冷卻時數）
+
 ### 文件與版控
 
 - 新增 `開發紀錄.md`、`requirements.txt`
