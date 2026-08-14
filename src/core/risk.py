@@ -16,12 +16,19 @@ class RiskProfile:
             "is_qualified": self.is_qualified
         }
 
-def calculate_risk_reward(expected_gain_pct: float, max_loss_pct: float) -> RiskProfile:
+def calculate_risk_reward(
+    expected_gain_pct: float,
+    max_loss_pct: float,
+    min_ratio: float = None,
+) -> RiskProfile:
+    if min_ratio is None:
+        from src.core.rule_config import get_agent_rules
+        min_ratio = get_agent_rules("risk_veto_agent")["min_risk_reward_ratio"]
     if max_loss_pct == 0:
         ratio = float("inf")
     else:
         ratio = expected_gain_pct / max_loss_pct
-    is_qualified = ratio >= 3.0
+    is_qualified = ratio >= min_ratio
     return RiskProfile(
         expected_gain_pct=expected_gain_pct,
         max_loss_pct=max_loss_pct,
@@ -30,8 +37,9 @@ def calculate_risk_reward(expected_gain_pct: float, max_loss_pct: float) -> Risk
     )
 
 def suggest_position_step(current_position: float) -> float:
-    # 每次調節幅度依據目前部位決定：若小於等於 40% 建議調節 20%，否則建議調節 10%
-    # 固定回傳 0.1 或 0.2
-    if current_position <= 0.4:
-        return 0.2
-    return 0.1
+    from src.core.rule_config import get_agent_rules
+    rules = get_agent_rules("asset_allocation_agent")
+    switch_pct = rules["position_step_switch_pct"]
+    if current_position <= switch_pct:
+        return rules["position_step_small"]
+    return rules["position_step_large"]

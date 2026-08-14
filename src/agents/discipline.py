@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 from typing import Dict, Any, List
 
+from src.core.rule_config import get_agent_rules
+
+
 class DisciplineAgent:
     def __init__(self):
         self.is_active = True
+        self.rules = get_agent_rules("discipline_agent")
 
     def analyze(self, ingested_data: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_active:
@@ -15,7 +19,9 @@ class DisciplineAgent:
         # 1. 檢查情緒化交易傾向
         # 近期日記的 emotion 欄位關鍵字檢查
         keywords = ["焦慮", "恐慌", "亢奮", "衝動", "貪婪", "害怕", "生氣", "挫折", "後悔", "盲目", "興奮"]
-        recent_entries = history[-5:]
+        lookback = int(self.rules["emotional_lookback_entries"])
+        trigger_count = int(self.rules["emotional_trigger_count"])
+        recent_entries = history[-lookback:]
         emotional_count = 0
         
         for entry in recent_entries:
@@ -23,7 +29,7 @@ class DisciplineAgent:
             if any(kw in emotion for kw in keywords):
                 emotional_count += 1
 
-        if len(recent_entries) >= 3 and emotional_count >= 3:
+        if len(recent_entries) >= trigger_count and emotional_count >= trigger_count:
             emotional_trading_pattern_signal = "情緒化交易傾向偏高"
         else:
             emotional_trading_pattern_signal = "情緒化交易傾向正常"
@@ -34,7 +40,9 @@ class DisciplineAgent:
             cooldown_reminder = "距離您上次對此標的產生交易衝動尚未滿一天，建議先散步或離開螢幕 5-10 分鐘"
 
         objective_findings = []
-        objective_findings.append(f"歷史日記分析數量: {len(history)} 筆（評估近期 5 筆中有 {emotional_count} 筆含有情緒波動紀錄）。")
+        objective_findings.append(
+            f"歷史日記分析數量: {len(history)} 筆（評估近期 {lookback} 筆中有 {emotional_count} 筆含有情緒波動紀錄）。"
+        )
         objective_findings.append(f"情緒化交易傾向評估: {emotional_trading_pattern_signal}。")
         
         if cooldown_reminder:

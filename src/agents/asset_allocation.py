@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 from typing import Dict, Any, List
 from src.core import risk
+from src.core.rule_config import get_agent_rules
+
 
 class AssetAllocationAgent:
     def __init__(self):
         self.is_active = True
+        self.rules = get_agent_rules("asset_allocation_agent")
 
     def analyze(self, ingested_data: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_active:
@@ -60,15 +63,17 @@ class AssetAllocationAgent:
             cash_ratio = cash / total_assets
             position_concentration = {k: v / total_assets for k, v in position_values.items()}
 
-        # 檢查是否單一標的過度集中 (>30%)
+        alert_pct = self.rules["concentration_alert_pct"]
         concentration_alerts = []
         objective_findings = []
         objective_findings.append(f"現金部位金額: {cash:,.0f} 元，占總資產比例: {cash_ratio * 100:.2f}%。")
         objective_findings.append(f"持股總市值: {total_position_value:,.0f} 元，占總資產比例: {(1.0 - cash_ratio) * 100:.2f}%。")
 
         for pos_symbol, ratio in position_concentration.items():
-            if ratio > 0.30:
-                concentration_alerts.append(f"持股 {pos_symbol} 占比為 {ratio * 100:.1f}%，超過 30.0% 的集中度警戒線。")
+            if ratio > alert_pct:
+                concentration_alerts.append(
+                    f"持股 {pos_symbol} 占比為 {ratio * 100:.1f}%，超過 {alert_pct * 100:.1f}% 的集中度警戒線。"
+                )
                 objective_findings.append(f"警訊：持股 {pos_symbol} 占比高達 {ratio * 100:.1f}%，處於過度集中狀態。")
             else:
                 objective_findings.append(f"持股 {pos_symbol} 占比為 {ratio * 100:.1f}%，在安全範圍內。")

@@ -32,11 +32,18 @@ class TraceCollector:
             "raw_output": raw_output,
             "final_report": final_report
         }
+        prompt_meta = {}
+        if isinstance(final_report, dict):
+            if final_report.get("rule_config_version"):
+                prompt_meta["rule_config_version"] = final_report.get("rule_config_version")
+            if final_report.get("prompt_persona_version"):
+                prompt_meta["prompt_persona_version"] = final_report.get("prompt_persona_version")
         self._write_json("03_llm_prompt.trace.json", {
             "model": model,
             "provider": provider,
             "system_prompt": system_prompt,
-            "user_prompt": user_prompt
+            "user_prompt": user_prompt,
+            **prompt_meta,
         })
         self._write_json("03_llm_output.trace.json", {
             "raw_output": raw_output,

@@ -2,6 +2,7 @@
 from typing import Any, Dict
 
 from src.analysis.behavior_risk import run_behavior_risk
+from src.core.rule_config import get_agent_rules
 
 
 class BehaviorRiskAgent:
@@ -9,6 +10,7 @@ class BehaviorRiskAgent:
 
     def __init__(self):
         self.is_active = True
+        self.rules = get_agent_rules("behavior_risk_agent")
 
     def analyze(self, ingested_data: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_active:
@@ -16,7 +18,9 @@ class BehaviorRiskAgent:
 
         price_data = ingested_data.get("price_action") or {}
         raw_history = price_data.get("raw_history") or []
-        threshold_pct = ingested_data.get("vwap_dev_threshold_pct", 5.0)
+        threshold_pct = ingested_data.get("vwap_dev_threshold_pct")
+        if threshold_pct is None:
+            threshold_pct = self.rules["vwap_dev_threshold_pct_default"]
 
         result = run_behavior_risk(raw_history, vwap_dev_threshold_pct=threshold_pct)
 

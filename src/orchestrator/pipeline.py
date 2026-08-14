@@ -24,6 +24,7 @@ from src.integrations.cli_collectors import (
     collect_timeout_sec,
     probe_collectors,
 )
+from src.core.rule_config import get_rules_version
 
 def run_agent_in_thread(agent_class, context: SharedContext, report_key: str, collector: TraceCollector, stage_name: str):
     agent = agent_class()
@@ -31,6 +32,8 @@ def run_agent_in_thread(agent_class, context: SharedContext, report_key: str, co
     if ingested_state:
         try:
             report = agent.analyze(ingested_state)
+            if isinstance(report, dict):
+                report["rule_config_version"] = get_rules_version()
             
             # Record trace
             processing_summary = report.get("objective_findings", [])
@@ -131,6 +134,7 @@ class OrchestratorPipeline:
             "journal_history": [e.to_dict() for e in self.journal_store.get_history(self.symbol)],
             "cooldown_passed": self.cooldown_tracker.is_cooldown_passed(self.symbol),
             "open_source_events": {},
+            "rule_config_version": get_rules_version(),
         }
 
         try:

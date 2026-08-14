@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 from typing import Dict, Any, List
 
+from src.core.rule_config import get_agent_rules
+
+
 class PricingGatekeeperAgent:
     def __init__(self):
         self.is_active = True
+        self.rules = get_agent_rules("pricing_gatekeeper_agent")
 
     def analyze(self, ingested_data: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_active:
@@ -34,13 +38,17 @@ class PricingGatekeeperAgent:
 
             # 價位合理性判斷邏輯
             if ma20 is not None and pe_ratio is not None and pe_ratio_5y_avg is not None and pe_ratio_5y_avg > 0:
-                # 價位偏高：價格顯著高於 20MA (高於 5%) 且本益比高於 5年均值 20% 以上
-                if close > 1.05 * ma20 and pe_ratio > 1.20 * pe_ratio_5y_avg:
+                overbought_ma = self.rules["overbought_price_vs_ma20_pct"]
+                overbought_pe = self.rules["overbought_pe_vs_5y_avg_pct"]
+                oversold_pe = self.rules["oversold_pe_vs_5y_avg_pct"]
+                oversold_ma60 = self.rules["oversold_price_vs_ma60_pct"]
+                # 價位偏高：價格顯著高於 20MA 且本益比高於 5年均值門檻
+                if close > overbought_ma * ma20 and pe_ratio > overbought_pe * pe_ratio_5y_avg:
                     price_reasonableness_signal = "價位偏高, 追高風險"
-                # 價位偏低：價格低於 20MA 且本益比較 5年均值低 (低於 1.5 倍平均，即 pe_percentile 具吸引力)，
-                # 若價格跌破 60MA 達 10% 以上，可能面臨未反映利空
-                elif close < ma20 and pe_ratio < 1.0 * pe_ratio_5y_avg:
-                    if ma60 is not None and close < 0.90 * ma60:
+                # 價位偏低：價格低於 20MA 且本益比較 5年均值低
+                # 若價格跌破 60MA 達門檻以上，可能面臨未反映利空
+                elif close < ma20 and pe_ratio < oversold_pe * pe_ratio_5y_avg:
+                    if ma60 is not None and close < oversold_ma60 * ma60:
                         price_reasonableness_signal = "價位偏低, 可能存在利空未反映"
                     else:
                         price_reasonableness_signal = "價位合理"
