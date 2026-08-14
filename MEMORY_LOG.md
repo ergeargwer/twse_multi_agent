@@ -1,7 +1,7 @@
 # TWSE Multi-Agent AI — Memory Log
 
-**上次更新**：2026-08-14  
-給後續對話用。完整決策與里程碑見 [開發紀錄.md](./開發紀錄.md)，對外說明見 [README.md](./README.md)。
+**上次更新**：2026-08-14（方法論校準 + 資料來源文件）  
+給後續對話用。完整決策與里程碑見 [開發紀錄.md](./開發紀錄.md)，對外說明見 [README.md](./README.md)。各 Agent 讀什麼資料以 README「各 Agent 資料來源」為準。
 
 ## 專案鐵律
 
@@ -33,11 +33,18 @@
 
 ## 現況架構
 
-- Phase 1：FinMind + Shioaji 唯讀 + 雙 CLI
-- Phase 2：九 Agent（含行為風險）
+- Phase 1：FinMind + Shioaji 唯讀 + Yahoo DXY + 雙 CLI
+- Phase 2：九 Agent（行為風險改月線乖離；集中度 50%）
 - Phase 3：LLM 後備 SpaceXAI → OpenRouter → Gemini
-- UI：`src/ui/app.py`，入口埠 **8505**
+- UI：`src/ui/app.py`，入口埠 **8505**；系統設定唯讀頁
 - 必須用專案 `venv`（系統 python 沒有 shioaji）
+
+## 仍待處理（不要當成沒做過 LLM）
+
+- 融資維持率／庫藏股／ETF 名單沒有穩定 API（邏輯已寫、資料常空）
+- 新聞情緒獨立 Agent
+- asyncio
+- `main.py` 標的改參數化（UI 已可輸入）
 
 ## 啟動
 
@@ -46,10 +53,3 @@ PYTHONPATH=. venv/bin/streamlit run src/ui/app.py --server.port 8505 --server.ad
 # 或
 venv/bin/python main.py
 ```
-
-## 仍待處理（不要當成沒做過 LLM）
-
-- 行事曆欄位常缺（回補日／ETF 名單／融資維持率）
-- 新聞情緒獨立 Agent
-- asyncio
-- `main.py` 標的改參數化（UI 已可輸入）
