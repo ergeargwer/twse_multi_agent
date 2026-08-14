@@ -2,10 +2,11 @@ import uuid
 import json
 import sys
 import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 
-# 讀取 .env
-load_dotenv()
+# 讀取專案根目錄 .env
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from src.orchestrator.pipeline import OrchestratorPipeline
 from src.core.journal import JournalStore, JournalEntry, JournalAction
@@ -35,7 +36,7 @@ def main():
 
     print("\n--- [Phase 2] 平行盲測分析啟動 ---")
     pipeline.run_phase_two_parallel()
-    print("四個 Base Agents (Fundamental, Technical, Institutional, Event) 分析完畢，各自報告已獨立寫入。")
+    print("Phase 2 Agents（含行為風險）分析完畢，各自報告已獨立寫入。")
 
     print("\n--- [Phase 3] Decision Synthesizer 衝突推演 ---")
     # 可以依需求調整預估漲幅與可容忍停損，預設使用 30% / 10%
@@ -69,6 +70,7 @@ def main():
                 tech = pipeline.context.read("technical_report") or {}
                 flow = pipeline.context.read("institutional_flow_report") or {}
                 evt = pipeline.context.read("event_calendar_report") or {}
+                behavior = pipeline.context.read("behavior_risk_report") or {}
                 
                 pe_sig = fund.get("pe_percentile_signal")
                 rev_sig = fund.get("revenue_achievement_signal")
@@ -77,12 +79,13 @@ def main():
                 flow_sig = flow.get("foreign_flow_reversal_signal")
                 margin_sig = evt.get("margin_ratio_signal")
                 buyback_sig = evt.get("buyback_signal")
+                behavior_sig = behavior.get("behavior_risk_signal")
                 
                 for name, sig in [
                     ("估值", pe_sig), ("營收", rev_sig), 
                     ("底部", bot_sig), ("高點", top_sig), 
                     ("籌碼", flow_sig), ("融資", margin_sig), 
-                    ("庫藏股", buyback_sig)
+                    ("庫藏股", buyback_sig), ("行為風險", behavior_sig)
                 ]:
                     if sig and sig != "資料源待補" and sig != "無明顯訊號":
                         reason_parts.append(f"{name}: {sig}")

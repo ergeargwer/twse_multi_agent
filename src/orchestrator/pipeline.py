@@ -16,8 +16,14 @@ from src.agents.asset_allocation import AssetAllocationAgent
 from src.agents.pricing_gatekeeper import PricingGatekeeperAgent
 from src.agents.risk_veto import RiskVetoAgent
 from src.agents.discipline import DisciplineAgent
+from src.agents.behavior_risk import BehaviorRiskAgent
 
 from src.integrations import shioaji_client
+from src.integrations.cli_collectors import (
+    collect_open_source_events_async,
+    collect_timeout_sec,
+    probe_collectors,
+)
 
 def run_agent_in_thread(agent_class, context: SharedContext, report_key: str, collector: TraceCollector, stage_name: str):
     agent = agent_class()
@@ -55,12 +61,22 @@ class OrchestratorPipeline:
         self.journal_store = journal_store or JournalStore()
         self.cooldown_tracker = cooldown_tracker or CooldownTracker()
 
-    def run_phase_one(self, expected_gain_pct: float = 30.0, max_loss_pct: float = 10.0):
+    def run_phase_one(
+        self,
+        expected_gain_pct: float = 30.0,
+        max_loss_pct: float = 10.0,
+        vwap_dev_threshold_pct: float = 5.0,
+    ):
         ingestion_agent = DataIngestionAgent(symbol=self.symbol)
+        cli_probe = probe_collectors()
+        print(
+            f"[Open Source CLI] enabled={cli_probe['enabled']} "
+            f"grok={cli_probe['grok']['available']} gemini={cli_probe['gemini']['available']}"
+        )
+        cli_future = collect_open_source_events_async(self.symbol)
         
         # 串接 Shioaji 取得帳戶與部位資訊
-        api_key = os.environ.get("SHIOAJI_API_KEY") or os.environ.get("SJ_API_KEY", "")
-        secret_key = os.environ.get("SHIOAJI_SECRET_KEY") or os.environ.get("SJ_SECRET_KEY", "")
+        api_key, secret_key = shioaji_client.get_credentials()
         
         api = None
         account_balance = None
@@ -101,6 +117,7 @@ class OrchestratorPipeline:
             "symbol": self.symbol,
             "expected_gain_pct": expected_gain_pct,
             "max_loss_pct": max_loss_pct,
+            "vwap_dev_threshold_pct": vwap_dev_threshold_pct,
             "account_data_status": account_data_status,
             "account_data_error": account_data_error,
             "account_balance": account_balance,
@@ -112,8 +129,27 @@ class OrchestratorPipeline:
             "account_balance": account_balance,
             "position_list": position_list,
             "journal_history": [e.to_dict() for e in self.journal_store.get_history(self.symbol)],
-            "cooldown_passed": self.cooldown_tracker.is_cooldown_passed(self.symbol)
+            "cooldown_passed": self.cooldown_tracker.is_cooldown_passed(self.symbol),
+            "open_source_events": {},
         }
+
+        try:
+            wait_sec = collect_timeout_sec() + 20
+            unified_data["open_source_events"] = cli_future.result(timeout=wait_sec)
+            cli_status = unified_data["open_source_events"].get("status")
+            both_count = unified_data["open_source_events"].get("both_count", 0)
+            print(f"[Open Source CLI] status={cli_status} both={both_count}")
+        except Exception as exc:
+            print(f"[Open Source CLI] 蒐集失敗（略過，不擋主流程）: {exc}")
+            unified_data["open_source_events"] = {
+                "status": "failed",
+                "symbol": self.symbol,
+                "items": [],
+                "sides": {},
+                "both_count": 0,
+                "quality": "unverified",
+                "error": str(exc),
+            }
         
         self.trace_collector.record_agent_trace(
             stage_name="01_ingestion",
@@ -136,7 +172,8 @@ class OrchestratorPipeline:
             (AssetAllocationAgent, "asset_allocation_report", "02_asset_allocation"),
             (PricingGatekeeperAgent, "pricing_gatekeeper_report", "02_pricing_gatekeeper"),
             (RiskVetoAgent, "risk_veto_report", "02_risk_veto"),
-            (DisciplineAgent, "discipline_report", "02_discipline")
+            (DisciplineAgent, "discipline_report", "02_discipline"),
+            (BehaviorRiskAgent, "behavior_risk_report", "02_behavior_risk"),
         ]
 
         for agent_class, report_key, stage_name in agent_configs:
@@ -160,8 +197,17 @@ class OrchestratorPipeline:
         self.context.write("synthesis_report", synthesis_report)
         agent.close()
 
-    def execute_all(self, expected_gain_pct: float = 30.0, max_loss_pct: float = 10.0):
-        self.run_phase_one(expected_gain_pct=expected_gain_pct, max_loss_pct=max_loss_pct)
+    def execute_all(
+        self,
+        expected_gain_pct: float = 30.0,
+        max_loss_pct: float = 10.0,
+        vwap_dev_threshold_pct: float = 5.0,
+    ):
+        self.run_phase_one(
+            expected_gain_pct=expected_gain_pct,
+            max_loss_pct=max_loss_pct,
+            vwap_dev_threshold_pct=vwap_dev_threshold_pct,
+        )
         self.run_phase_two_parallel()
         self.run_phase_three(expected_gain_pct=expected_gain_pct, max_loss_pct=max_loss_pct)
         return self.context

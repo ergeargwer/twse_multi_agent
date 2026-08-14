@@ -20,6 +20,7 @@ class DecisionSynthesizerAgent:
         pricing_gatekeeper_report = context_store.get("pricing_gatekeeper_report") or {}
         veto_report = context_store.get("risk_veto_report") or {}
         discipline_report = context_store.get("discipline_report") or {}
+        behavior_risk_report = context_store.get("behavior_risk_report") or {}
         
         # 1. 計算風暴比
         risk_profile = risk.calculate_risk_reward(expected_gain_pct, max_loss_pct)
@@ -61,7 +62,11 @@ class DecisionSynthesizerAgent:
             "1. 嚴禁給出任何具體買賣點位或「應該買/應該賣」的直接建議。最終決策權必須交還給使用者。\n"
             "2. 先列出多空雙方的訊號與矛盾點（呼應「多空矛盾比對」邏輯）。\n"
             "3. 用「情境推演」語言取代「預測」語言（例如避免使用「將會上漲」，改用「若技術面訊號延續，可能面臨的情境是...」）。\n"
-            "4. 結尾必須附上風暴比與分批操作的提醒，而非明確目標價。\n\n"
+            "4. 結尾必須附上風暴比與分批操作的提醒，而非明確目標價。\n"
+            "5. behavior_risk 只是已發生的量價極端乖離／背離標記（高追價、低殺出），"
+            "必須當成行為觀察而非買賣指令，也不可推論主力或未來點位。\n"
+            "6. event 報告中的開放來源（Grok CLI / Gemini CLI）新聞與公告為未驗證網路蒐集，"
+            "即使標為雙源交叉印證，也不得當成既定事實、法人數據或買賣依據。\n\n"
             "請基於以下傳入的各分析 Agent JSON 報告進行客觀之情境推演與彙總。"
         )
         
@@ -73,34 +78,14 @@ class DecisionSynthesizerAgent:
             "asset_allocation": asset_allocation_report,
             "pricing_gatekeeper": pricing_gatekeeper_report,
             "risk_veto": veto_report,
-            "discipline": discipline_report
+            "discipline": discipline_report,
+            "behavior_risk": behavior_risk_report,
         }, ensure_ascii=False, indent=2)
         
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        api_key = os.environ.get("OPENROUTER_API_KEY", "")
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "model": "google/gemma-4-31b-it",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
-        }
-        
-        scenario_conclusion = ""
-        
-        try:
-            r = requests.post(url, headers=headers, json=data, timeout=30)
-            if r.status_code == 200:
-                resp_json = r.json()
-                scenario_conclusion = resp_json["choices"][0]["message"]["content"]
-            else:
-                scenario_conclusion = f"LLM API 請求失敗 (HTTP {r.status_code})。可能為缺少金鑰或模型不支援。"
-        except Exception as e:
-            scenario_conclusion = f"LLM API 請求發生例外錯誤: {str(e)}"
+        llm_result = self._complete_with_fallback(system_prompt, user_prompt)
+        scenario_conclusion = llm_result["content"]
+        used_model = llm_result["model"]
+        used_provider = llm_result["provider"]
             
         # 程式化置頂風控煞車段落 (硬性規則以防 LLM 遺漏)
         if veto_active and veto_reason:
@@ -122,13 +107,33 @@ class DecisionSynthesizerAgent:
             
         # 從各報告匯總客觀數據點
         all_findings = []
-        for rpt in [fund_report, tech_report, flow_report, event_report, asset_allocation_report, pricing_gatekeeper_report, veto_report, discipline_report]:
+        for rpt in [
+            fund_report,
+            tech_report,
+            flow_report,
+            event_report,
+            asset_allocation_report,
+            pricing_gatekeeper_report,
+            veto_report,
+            discipline_report,
+            behavior_risk_report,
+        ]:
             all_findings.extend(rpt.get("objective_findings", []))
  
         report = {
             "agent_name": "Decision Synthesizer Agent",
             "process": "conflict_resolution_and_alignment",
-            "inputs_parsed": ["fundamental", "technical", "institutional", "event", "asset_allocation", "pricing_gatekeeper", "risk_veto", "discipline"],
+            "inputs_parsed": [
+                "fundamental",
+                "technical",
+                "institutional",
+                "event",
+                "asset_allocation",
+                "pricing_gatekeeper",
+                "risk_veto",
+                "discipline",
+                "behavior_risk",
+            ],
             "aligned_evidence": all_findings,
             "conflicting_evidence": [],
             "scenario_synthesis": scenario_conclusion,
@@ -140,8 +145,8 @@ class DecisionSynthesizerAgent:
         
         if collector:
             collector.record_llm_trace(
-                model="google/gemma-4-31b-it",
-                provider="OpenRouter",
+                model=used_model,
+                provider=used_provider,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 raw_output=scenario_conclusion,
@@ -149,6 +154,135 @@ class DecisionSynthesizerAgent:
             )
             
         return report
- 
+
+    def _complete_with_fallback(self, system_prompt: str, user_prompt: str) -> Dict[str, str]:
+        """依可用金鑰依序嘗試 SpaceXAI / OpenRouter / Gemini。"""
+        errors = []
+        last_model = os.environ.get("LLM_MODEL", "google/gemma-4-31b-it")
+        last_provider = "none"
+
+        for attempt in self._llm_attempts():
+            last_model = attempt["model"]
+            last_provider = attempt["provider"]
+            try:
+                response = self._dispatch_llm(attempt, system_prompt, user_prompt)
+                if response.status_code == 200:
+                    content = self._extract_content(attempt["kind"], response)
+                    if content:
+                        return {
+                            "content": content,
+                            "model": attempt["model"],
+                            "provider": attempt["provider"],
+                        }
+                    errors.append(f"{attempt['provider']} 回傳空白內容")
+                else:
+                    errors.append(
+                        f"{attempt['provider']} HTTP {response.status_code}: {self._extract_error(response)}"
+                    )
+            except Exception as exc:
+                errors.append(f"{attempt['provider']} 例外: {exc}")
+
+        if not errors:
+            detail = "未設定 XAI_API_KEY / OPENROUTER_API_KEY / GEMINI_API_KEY"
+        else:
+            detail = "；".join(errors)
+
+        return {
+            "content": f"LLM API 請求失敗。{detail}",
+            "model": last_model,
+            "provider": last_provider,
+        }
+
+    def _llm_attempts(self) -> list:
+        preferred = os.environ.get("LLM_PROVIDER", "").strip().lower()
+        xai_key = os.environ.get("XAI_API_KEY", "").strip()
+        or_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        gemini_key = (
+            os.environ.get("GEMINI_API_KEY", "").strip()
+            or os.environ.get("GOOGLE_API_KEY", "").strip()
+        )
+
+        candidates = []
+        if xai_key:
+            candidates.append({
+                "kind": "openai",
+                "provider": "SpaceXAI",
+                "model": os.environ.get("XAI_MODEL", "grok-4.5"),
+                "url": "https://api.x.ai/v1/chat/completions",
+                "api_key": xai_key,
+            })
+        if or_key:
+            candidates.append({
+                "kind": "openai",
+                "provider": "OpenRouter",
+                "model": os.environ.get("OPENROUTER_MODEL") or os.environ.get("LLM_MODEL") or "google/gemma-4-31b-it",
+                "url": "https://openrouter.ai/api/v1/chat/completions",
+                "api_key": or_key,
+            })
+        if gemini_key:
+            candidates.append({
+                "kind": "gemini",
+                "provider": "Gemini",
+                "model": os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash",
+                "url": "",
+                "api_key": gemini_key,
+            })
+
+        if preferred:
+            preferred_map = {"xai": "SpaceXAI", "spacexai": "SpaceXAI", "openrouter": "OpenRouter", "gemini": "Gemini"}
+            target = preferred_map.get(preferred, preferred)
+            candidates.sort(key=lambda item: 0 if item["provider"].lower() == target.lower() else 1)
+        return candidates
+
+    def _dispatch_llm(self, attempt: Dict[str, str], system_prompt: str, user_prompt: str):
+        if attempt["kind"] == "gemini":
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{attempt['model']}:generateContent?key={attempt['api_key']}"
+            )
+            payload = {
+                "system_instruction": {"parts": [{"text": system_prompt}]},
+                "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                "generationConfig": {"temperature": 0.4},
+            }
+            return requests.post(url, json=payload, timeout=60)
+
+        headers = {
+            "Authorization": f"Bearer {attempt['api_key']}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": attempt["model"],
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        return requests.post(attempt["url"], headers=headers, json=payload, timeout=60)
+
+    def _extract_content(self, kind: str, response) -> str:
+        data = response.json()
+        if kind == "gemini":
+            parts = (
+                data.get("candidates") or [{}]
+            )[0].get("content", {}).get("parts") or []
+            return "".join(part.get("text", "") for part in parts).strip()
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message") or {}).get("content", "").strip()
+
+    def _extract_error(self, response) -> str:
+        try:
+            data = response.json()
+        except Exception:
+            return (response.text or "")[:300]
+        err = data.get("error")
+        if isinstance(err, dict):
+            return str(err.get("message") or err)[:300]
+        if err:
+            return str(err)[:300]
+        return (response.text or "")[:300]
+
     def close(self):
         self.is_active = False

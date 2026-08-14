@@ -14,9 +14,9 @@ class DataIngestionAgent:
         
         # Initialize Shioaji API if credentials are provided
         self.sj_active = False
-        sj_api_key = os.environ.get("SJ_API_KEY", "")
-        sj_secret_key = os.environ.get("SJ_SECRET_KEY", "")
-        sj_simulation = os.environ.get("SJ_SIMULATION", "True").lower() in ("true", "1", "yes")
+        from src.integrations.shioaji_client import get_credentials, is_simulation
+        sj_api_key, sj_secret_key = get_credentials()
+        sj_simulation = is_simulation()
 
         if sj_api_key and sj_secret_key:
             try:

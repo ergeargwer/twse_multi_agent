@@ -1,48 +1,55 @@
-# TWSE Multi-Agent AI 投資決策系統 - 開發記憶保存 (Memory Log)
+# TWSE Multi-Agent AI — Memory Log
 
-本文件旨在為未來的重啟或新對話提供完整的專案上下文與進度備忘。
-**上次更新日期**: 2026-04-15
+**上次更新**：2026-08-14  
+給後續對話用。完整決策與里程碑見 [開發紀錄.md](./開發紀錄.md)，對外說明見 [README.md](./README.md)。
 
-## 專案核心宗旨
-建立一個專為「台灣股市（TWSE / TPEx）」打造的多 Agent 分析架構 (MVP)。
-本系統引進台股特有的「淺碟市場、籌碼戰、強制融券回補、ETF被動資金吃豆腐」等邏輯，採用 **「平行盲測運算 (Parallel Blackbox Execution) 與衝突推演」**，以避免單一 LLM 分析的偏誤。所有的 Agent 必須嚴格保持 **無狀態 (Stateless)** 且 **讀寫分離**。
+## 專案鐵律
 
----
+- Phase 2 Agent 必須 Stateless、互不可見，不可互相呼叫
+- 一切彙整只走 Phase 3 Synthesizer
+- 禁止買賣點位與自動下單
+- 開放來源即使雙 CLI 交叉也是 `unverified`
 
-## 🎯 已完成進度 (Current Status)
+## 2026-08-14
 
-### 1. 結構重構模組化 (Refactoring Completed)
-專案已從零散的腳本重構為具備軟體工程標準的架構：
-- `main.py`: 全局啟動入口。
-- `src/core/context.py`: 提供基於 `threading.Lock()` 防護的 `SharedContext` 記憶體中樞。
-- `src/orchestrator/pipeline.py`: 控制所有階段的調度器，負責以多執行緒 (`threading`) 平行啟動 Base Agents。
-- `src/agents/`: 存放所有獨立的 Agent (`ingestion.py`, `fundamental.py`, `technical.py`, `institutional.py`, `event.py`, `synthesizer.py`)。
+### 行為風險
 
-### 2. 真實數據串接 (Data Provider Integration)
-`Phase 1` (`ingestion.py`) 已完成與真實 API 的串接，並且具備防止斷線的 **Fallback 容錯機制**，保護後方 Agent 不至於崩潰：
-- **環境設定**: 已建立 Python 虛擬環境 (`venv`) 解決樹莓派環境衝突，必須使用 `./venv/bin/python main.py` 啟動。
-- **價量與基本面**: 整合 `yfinance` 獲取真實歷史 K 線並計算 MA 均線，以及擷取 PE/PB 等財報估值。
-- **籌碼面**: 整合 `FinMind.data` 擷取外資、投信、自營商買賣超淨額，以及融資餘額狀況。
-- **測試點驗證**: 已針對 `2330.TW` (台積電)、`5425.TWO` (台半) 與 `2327.TW` (國巨) 驗證真實數據抓取，Phase 2/3 的盲測推演運作一切正常。
+- 移植 `stock_risk_alert` → `src/analysis/behavior_risk.py` + `src/agents/behavior_risk.py`
+- 只讀日線 `raw_history`；不否決交易
+- UI：`src/ui/risk_chart.py`，分頁「行為風險」
+- 測試：`scratch/test_behavior_risk.py`
 
----
+### 雙 CLI 合作蒐集
 
-## 🚀 未來啟動與延續指南 (Next Steps)
+- `src/integrations/cli_collectors.py`：Grok `-p` 與 Gemini `-p` 平行
+- Gemini 必須 Node 22（本機 PATH node 是 v18）
+- Event Agent 讀 `open_source_events`；`CLI_COLLECT_ENABLED=0` 可關
+- 測試：`scratch/test_cli_collectors.py`
 
-下一次重啟對話時，請 AI 讀取本目錄 `/home/sweet/.gemini/antigravity/scratch/twse_multi_agent/` 下的 `README.md` 與 `MEMORY_LOG.md` 即可無縫接軌。
+### 文件與版控
 
-**強烈建議優先執行的後續任務：**
+- 新增 `開發紀錄.md`、`requirements.txt`
+- `.gitignore` 的 `trace/` 曾誤傷 `src/trace/`，已改 `/trace/`
 
-1. **整合真實 LLM (Large Language Model API)**
-   - 目前 `src/agents/synthesizer.py` (`DecisionSynthesizerAgent`) 的決策推演是採用「簡單關鍵字掃描 (Keyword Counting)」來判斷多空矛盾。
-   - **下一步**：應該在此處接入 `openai` 或 `google.generativeai`，將前方 4 個 Base Agent 吐出來的 JSON 餵給 GPT-4 或 Gemini，利用 `Prompt` 規範它進行深度的邏輯辯證。
+## 現況架構
 
-2. **優化 Event Agent 數據源**
-   - 目前 `fetch_calendar_events()` 仍採用模擬的回傳值（因為除權息與 ETF 審核更動很難有免費即時 API）。
-   - **下一步**：尋找能抓取「強制回補日」或「ETF 候選換股名單」的爬蟲方式注入其中。
+- Phase 1：FinMind + Shioaji 唯讀 + 雙 CLI
+- Phase 2：九 Agent（含行為風險）
+- Phase 3：LLM 後備 SpaceXAI → OpenRouter → Gemini
+- UI：`src/ui/app.py`，入口埠 **8505**
+- 必須用專案 `venv`（系統 python 沒有 shioaji）
 
-3. **優化依賴注入與配置**
-   - 提供一份 `config.yaml` 或 `.env` 讓使用者可以自由抽換 `target_symbol`，而不是寫死在 `main.py` 裡面。
+## 啟動
 
-**【開發鐵律提醒未來 AI】**：
-永遠不得干涉 Phase 2 四個 Base Agent 的平行獨立性。它們不能互相呼叫，也不能試圖看到別人的報告。一切交流只能透過最終的 Phase 3 Synthesizer 來執行。
+```bash
+PYTHONPATH=. venv/bin/streamlit run src/ui/app.py --server.port 8505 --server.address 127.0.0.1 --server.headless true
+# 或
+venv/bin/python main.py
+```
+
+## 仍待處理（不要當成沒做過 LLM）
+
+- 行事曆欄位常缺（回補日／ETF 名單／融資維持率）
+- 新聞情緒獨立 Agent
+- asyncio
+- `main.py` 標的改參數化（UI 已可輸入）

@@ -1,18 +1,291 @@
 # -*- coding: utf-8 -*-
 import os
+import json
 import uuid
 import datetime
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
+from pathlib import Path
 from dotenv import load_dotenv
 from typing import List, Dict, Any
 
-# 讀取 .env
-load_dotenv()
+# 固定讀專案根目錄 .env（streamlit run src/ui/app.py 時不可依賴 cwd）
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(_PROJECT_ROOT / ".env")
 
+import importlib
 from src.orchestrator.pipeline import OrchestratorPipeline
 from src.core.journal import JournalStore, JournalEntry, JournalAction
 from src.core.cooldown import CooldownTracker
+from src.trace import visualizer as visualizer_mod
+from src.analysis.behavior_risk import run_behavior_risk
+from src.ui.risk_chart import create_risk_chart
+
+importlib.reload(visualizer_mod)
+TraceVisualizer = visualizer_mod.TraceVisualizer
+
+
+def render_mermaid(diagram: str, height: int = 720) -> None:
+    payload = json.dumps(diagram)
+    components.html(
+        f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    html, body {{ margin: 0; background: transparent; }}
+    #graph {{ padding: 4px 0 8px 0; }}
+  </style>
+</head>
+<body>
+  <div id="graph">流程圖載入中...</div>
+  <script>
+    const src = {payload};
+    mermaid.initialize({{
+      startOnLoad: false,
+      theme: "base",
+      securityLevel: "loose",
+      themeVariables: {{
+        fontFamily: "Inter, Noto Sans TC, sans-serif",
+        primaryColor: "#eef2ff",
+        primaryTextColor: "#1e3c72",
+        primaryBorderColor: "#2a5298",
+        lineColor: "#64748b"
+      }}
+    }});
+    mermaid.render("twseFlow", src).then((out) => {{
+      document.getElementById("graph").innerHTML = out.svg;
+    }}).catch((err) => {{
+      document.getElementById("graph").innerHTML =
+        "<pre style='color:#991b1b;white-space:pre-wrap'>" + String(err) + "</pre>";
+    }});
+  </script>
+</body>
+</html>""",
+        height=height,
+        scrolling=True,
+    )
+
+
+def render_agent_reports(task_id: str, key_prefix: str) -> None:
+    """逐一展開各 Agent 的發現、訊號與 JSON，供修改 agent 時對照。"""
+    viz = TraceVisualizer(task_id)
+    reports = viz.iter_agent_reports()
+    if not any(item["present"] for item in reports):
+        st.info("此任務尚無 Agent trace 可供檢視。")
+        return
+
+    rows = []
+    for item in reports:
+        signal_text = "、".join(
+            f"{k}={v}" for k, v in item["signals"].items() if v not in ("", None)
+        )
+        rows.append({
+            "階段": item["stage"],
+            "Agent": item["title"],
+            "原始碼": item["source"],
+            "狀態": "已產出" if item["present"] else "未產出",
+            "摘要 / 訊號": item["summary"] or signal_text or ("—" if item["present"] else "無 trace"),
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption(f"Trace 目錄：`trace/task_id={task_id}/`。展開下方卡片可看輸入、判斷與完整輸出 JSON。")
+
+    for item in reports:
+        badge = "已產出" if item["present"] else "未產出"
+        with st.expander(f"{item['title']}　{item['stage']}　[{badge}]　{item['source']}", expanded=False):
+            if not item["present"]:
+                st.caption("這次 pipeline 沒有寫入此 Agent 的 trace，通常是較舊的任務或缺資料。")
+                continue
+            st.write(f"**對應程式**：`{item['source']}`")
+            if item["signals"]:
+                st.write("**關鍵訊號**")
+                st.json(item["signals"])
+            if item["findings"]:
+                st.write("**客觀發現 / 判斷過程**")
+                for finding in item["findings"]:
+                    st.write(f"- {finding}")
+            if item["summary"]:
+                st.write("**摘要**")
+                st.write(item["summary"])
+            if item["input"]:
+                st.write("**輸入（input_trace，長列表已裁切）**")
+                st.json(item["input"])
+            if item["output"]:
+                st.write("**輸出（output / prompt，長列表已裁切）**")
+                st.json(item["output"])
+            raw_json = json.dumps(item["raw"], ensure_ascii=False, indent=2)
+            st.download_button(
+                label=f"下載 {item['stage']} 完整 JSON",
+                data=raw_json,
+                file_name=f"{item['stage']}.trace.json",
+                mime="application/json",
+                key=f"{key_prefix}_{item['stage']}_dl",
+            )
+
+
+def load_open_source_from_task(task_id: str) -> Dict[str, Any]:
+    ingestion_path = os.path.join("trace", f"task_id={task_id}", "01_ingestion.trace.json")
+    if not os.path.exists(ingestion_path):
+        return {}
+    try:
+        with open(ingestion_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        output = data.get("output_trace") or {}
+        return output.get("open_source_events") or {}
+    except Exception:
+        return {}
+
+
+def render_open_source_panel(bundle: Dict[str, Any], key_prefix: str) -> None:
+    """顯示 Grok / Gemini 合作蒐集結果。"""
+    st.write("### 開放來源事件（Grok CLI + Gemini CLI）")
+    if not bundle:
+        st.caption("此次沒有開放來源蒐集結果。")
+        return
+    status = bundle.get("status") or "missing"
+    both_count = bundle.get("both_count") or 0
+    sides = bundle.get("sides") or {}
+    st.caption(
+        f"狀態 `{status}`；雙源交叉 {both_count} 筆。全部標為未驗證，不得視為事實或買賣依據。"
+    )
+    if sides:
+        cols = st.columns(2)
+        for idx, name in enumerate(("grok", "gemini")):
+            side = sides.get(name) or {}
+            cols[idx].write(
+                f"**{name}**：`{side.get('status', 'n/a')}`　"
+                f"{side.get('item_count', 0)} 筆"
+                + (f"　{side.get('error')}" if side.get("error") else "")
+            )
+    items = bundle.get("items") or []
+    if not items:
+        st.info("沒有可顯示的開放來源條目。")
+        return
+    rows = []
+    for item in items:
+        rows.append({
+            "日期": item.get("date") or "",
+            "類型": item.get("kind") or "",
+            "交叉": item.get("agreement") or "",
+            "來源": "/".join(item.get("sources") or []),
+            "標題": item.get("title") or "",
+            "摘要": item.get("summary") or "",
+            "URL": item.get("url") or "",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, key=f"{key_prefix}_os_table")
+
+
+def load_price_history_from_task(task_id: str) -> List[Dict[str, Any]]:
+    """從 Phase 1 ingestion trace 取出日線 raw_history。"""
+    ingestion_path = os.path.join("trace", f"task_id={task_id}", "01_ingestion.trace.json")
+    if not os.path.exists(ingestion_path):
+        return []
+    try:
+        with open(ingestion_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        output = data.get("output_trace") or {}
+        price = output.get("price_action") or {}
+        return price.get("raw_history") or []
+    except Exception:
+        return []
+
+
+def render_behavior_risk_panel(
+    raw_history: List[Dict[str, Any]],
+    symbol: str,
+    key_prefix: str,
+    default_vwap: float = 5.0,
+) -> None:
+    """可調 VWAP 閾值重算行為風險圖與近期事件表。"""
+    st.warning("所有分析僅為市場行為風險提示，非投資建議，非主力判斷。")
+    if not raw_history:
+        st.info("尚無日線價量。請先執行 Pipeline，或在本頁以「只抓價量」取得資料。")
+        return
+
+    vwap_dev = st.slider(
+        "高追價：VWAP 乖離率閾值 (%)",
+        min_value=1.0,
+        max_value=15.0,
+        value=float(default_vwap),
+        step=0.5,
+        key=f"{key_prefix}_vwap",
+    )
+    result = run_behavior_risk(raw_history, vwap_dev_threshold_pct=vwap_dev)
+    signal = result["signal"]
+    if signal == "高追價風險":
+        st.error(f"最新行為標記：{signal}。{result['latest_risk_reason']}")
+    elif signal == "低殺出風險":
+        st.warning(f"最新行為標記：{signal}。{result['latest_risk_reason']}")
+    else:
+        st.success(f"最新行為標記：{signal}")
+
+    cols = st.columns(3)
+    cols[0].metric("分析根數", result["bars_analyzed"])
+    cols[1].metric("高追價筆數", result["high_chase_count"])
+    cols[2].metric("低殺出筆數", result["low_sell_count"])
+
+    if result["frame"] is not None and not result["frame"].empty:
+        st.plotly_chart(
+            create_risk_chart(result["frame"], symbol),
+            use_container_width=True,
+            key=f"{key_prefix}_chart",
+        )
+        st.caption("將游標移到三角形標記可查看風險原因。本圖使用 Pipeline 已收集的日線，不另打分鐘線 API。")
+
+    if result["recent_events"]:
+        st.write("### 近期行為風險事件")
+        st.dataframe(pd.DataFrame(result["recent_events"]), use_container_width=True, hide_index=True)
+    else:
+        st.info("近期內未偵測出顯著的行為乖離或背離風險。")
+
+
+def get_report_history(require_llm: bool = True) -> List[Dict[str, Any]]:
+    import glob
+
+    trace_dir = "trace"
+    if not os.path.exists(trace_dir):
+        return []
+
+    reports = []
+    task_dirs = glob.glob(os.path.join(trace_dir, "task_id=*"))
+    for task_dir in task_dirs:
+        try:
+            task_id = os.path.basename(task_dir).replace("task_id=", "")
+            llm_path = os.path.join(task_dir, "03_llm_output.trace.json")
+            ingestion_path = os.path.join(task_dir, "01_ingestion.trace.json")
+            if require_llm and not os.path.exists(llm_path):
+                continue
+            scenario_synthesis = ""
+            if os.path.exists(llm_path):
+                with open(llm_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                scenario_synthesis = (data.get("final_report") or {}).get("scenario_synthesis", "") or data.get("raw_output", "")
+            symbol = "未知"
+            if os.path.exists(ingestion_path):
+                with open(ingestion_path, "r", encoding="utf-8") as inf:
+                    ing_data = json.load(inf)
+                symbol = (
+                    (ing_data.get("input_data") or {}).get("symbol")
+                    or (ing_data.get("output_trace") or {}).get("symbol")
+                    or "未知"
+                )
+            stamp_file = llm_path if os.path.exists(llm_path) else ingestion_path
+            if not os.path.exists(stamp_file):
+                stamp_file = task_dir
+            mtime = os.path.getmtime(stamp_file)
+            reports.append({
+                "time": datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "symbol": symbol,
+                "report": scenario_synthesis,
+                "mtime": mtime,
+                "task_id": task_id,
+            })
+        except Exception:
+            pass
+    reports.sort(key=lambda x: x["mtime"], reverse=True)
+    return reports
 
 st.set_page_config(
     page_title="TWSE Multi-Agent AI 投資管家",
@@ -107,15 +380,14 @@ if check_password():
         
         # 讀取 Shioaji 帳戶資料 (僅真實資料，查詢失敗或未設定時顯示提示，不回傳假資料)
         from src.integrations import shioaji_client
-        api_key = os.environ.get("SHIOAJI_API_KEY") or os.environ.get("SJ_API_KEY", "")
-        secret_key = os.environ.get("SHIOAJI_SECRET_KEY") or os.environ.get("SJ_SECRET_KEY", "")
+        api_key, secret_key = shioaji_client.get_credentials()
         
         account_balance = None
         position_list = None
         query_success = False
         
         if not api_key or not secret_key:
-            st.info("尚未設定 Shioaji 帳戶金鑰，請於 .env 中設定 SHIOAJI_API_KEY 與 SHIOAJI_SECRET_KEY 後即可查看真實帳戶資料。")
+            st.info("尚未設定 Shioaji 帳戶金鑰，請於專案根目錄 .env 設定 SHIOAJI_API_KEY / SHIOAJI_SECRET_KEY（或 SJ_API_KEY / SJ_SECRET_KEY）後重新啟動即可查看真實帳戶資料。")
         else:
             with st.spinner("正在安全連接券商取得最新帳務與部位資料..."):
                 api = None
@@ -217,13 +489,14 @@ if check_password():
         st.title("個股分析報告")
         st.write("藉由多 Agent 平行盲測與修行者決策機制，進行情境推演。")
         
-        tab1, tab2 = st.tabs(["新增分析推演", "歷史報告查詢"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["新增分析推演", "歷史報告查詢", "分析流程", "Agent 報告", "行為風險"])
         
         with tab1:
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             symbol = col1.text_input("請輸入股票代號 (例: 2379.TW)", value="2379.TW", key="new_report_symbol")
             expected_gain = col2.number_input("預期漲幅 (%)", min_value=1.0, max_value=200.0, value=30.0, step=1.0, key="new_report_gain")
             max_loss = col3.number_input("可容忍停損 (%)", min_value=1.0, max_value=100.0, value=10.0, step=1.0, key="new_report_loss")
+            vwap_threshold = col4.number_input("VWAP 乖離閾值 (%)", min_value=1.0, max_value=15.0, value=5.0, step=0.5, key="new_report_vwap")
             
             if st.button("開始執行 Pipeline 分析", key="run_pipeline_btn"):
                 task_id = str(uuid.uuid4())
@@ -237,10 +510,23 @@ if check_password():
                             cooldown_tracker=cooldown_tracker
                         )
                         # 執行 Ingestion + Agents + Synthesizer
-                        context = pipeline.execute_all(expected_gain_pct=expected_gain, max_loss_pct=max_loss)
+                        context = pipeline.execute_all(
+                            expected_gain_pct=expected_gain,
+                            max_loss_pct=max_loss,
+                            vwap_dev_threshold_pct=vwap_threshold,
+                        )
+                        st.session_state["last_analysis_task_id"] = task_id
+                        st.session_state["last_analysis_symbol"] = symbol
+                        ingested = context.read("ingested_data") or {}
+                        st.session_state["last_price_history"] = (
+                            (ingested.get("price_action") or {}).get("raw_history") or []
+                        )
+                        st.session_state["last_vwap_threshold"] = vwap_threshold
+                        st.session_state["last_open_source"] = ingested.get("open_source_events") or {}
                         synthesis_report = context.read("synthesis_report")
                         pricing_report = context.read("pricing_keeper_report") or context.read("pricing_gatekeeper_report") or {}
                         veto_report = context.read("risk_veto_report") or {}
+                        behavior_report = context.read("behavior_risk_report") or {}
                         
                         st.success("分析推演完成！")
                         st.write("---")
@@ -271,70 +557,63 @@ if check_password():
                         else:
                             st.success("### [風控檢測通過]\n未觸發任何否決條件。")
                             
-                        # 顯示定價把關標籤
+                        # 顯示定價把關與行為風險標籤
                         gatekeeper_signal = pricing_report.get("price_reasonableness_signal", "無此訊號")
+                        behavior_signal = behavior_report.get("behavior_risk_signal", "無明顯訊號")
                         st.write(f"**定價合理性把關標籤**：`{gatekeeper_signal}`")
+                        st.write(f"**行為風險標記**：`{behavior_signal}`")
+                        event_report = context.read("event_calendar_report") or {}
+                        st.write(f"**開放來源標記**：`{event_report.get('open_source_signal', '無明顯訊號')}`")
+                        render_open_source_panel(
+                            st.session_state.get("last_open_source") or {},
+                            key_prefix="new_run_os",
+                        )
+
+                        st.write("### 行為風險圖表")
+                        render_behavior_risk_panel(
+                            st.session_state.get("last_price_history") or [],
+                            symbol,
+                            key_prefix="new_run_risk",
+                            default_vwap=vwap_threshold,
+                        )
                         
                         # 顯示 synthesizer 產出的報告
                         st.write("### 決策彙整報告 (Decision Synthesis Report)")
                         report_text = synthesis_report.get("scenario_synthesis", "無報告內容")
                         st.text_area("報告原文", report_text, height=450, key="new_report_output")
+
+                        st.write("### 各 Agent 結果（修改功能時可對照）")
+                        render_agent_reports(task_id, key_prefix="new_run")
+
+                        st.write("### 本次分析流程")
+                        render_mermaid(TraceVisualizer(task_id).generate_run_flowchart(), height=780)
                         
                         st.caption("免責聲明：本報告僅基於客觀數據推演，請投資人維持獨立思考，自行承擔損益風險。")
                     except Exception as e:
                         st.error(f"分析執行時發生錯誤: {e}")
                         import traceback
                         st.code(traceback.format_exc())
+            elif st.session_state.get("last_analysis_task_id"):
+                last_tid = st.session_state["last_analysis_task_id"]
+                last_sym = st.session_state.get("last_analysis_symbol", "")
+                st.info(f"上次分析仍可檢視：`{last_sym}` / `{last_tid}`")
+                last_hist = st.session_state.get("last_price_history") or load_price_history_from_task(last_tid)
+                st.session_state["last_price_history"] = last_hist
+                last_os = st.session_state.get("last_open_source") or load_open_source_from_task(last_tid)
+                st.session_state["last_open_source"] = last_os
+                render_open_source_panel(last_os, key_prefix="last_run_os")
+                st.write("### 行為風險圖表")
+                render_behavior_risk_panel(
+                    last_hist,
+                    last_sym,
+                    key_prefix="last_run_risk",
+                    default_vwap=float(st.session_state.get("last_vwap_threshold", 5.0)),
+                )
+                st.write("### 各 Agent 結果（修改功能時可對照）")
+                render_agent_reports(last_tid, key_prefix="last_run")
                         
         with tab2:
             st.write("### 查詢過去產出的分析報告")
-            
-            # 定義歷史報告讀取函數
-            def get_report_history() -> List[Dict[str, Any]]:
-                import glob
-                import os
-                import json
-                import datetime
-                
-                trace_dir = "trace"
-                if not os.path.exists(trace_dir):
-                    return []
-                    
-                reports = []
-                pattern = os.path.join(trace_dir, "task_id=*", "03_llm_output.trace.json")
-                files = glob.glob(pattern)
-                
-                for fpath in files:
-                    try:
-                        mtime = os.path.getmtime(fpath)
-                        dt = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                        
-                        with open(fpath, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                            
-                        final_report = data.get("final_report", {})
-                        scenario_synthesis = final_report.get("scenario_synthesis", "")
-                        
-                        # 取得 symbol
-                        ingestion_path = fpath.replace("03_llm_output.trace.json", "01_ingestion.trace.json")
-                        symbol = "未知"
-                        if os.path.exists(ingestion_path):
-                            with open(ingestion_path, "r", encoding="utf-8") as inf:
-                                ing_data = json.load(inf)
-                            symbol = ing_data.get("input_data", {}).get("symbol", "未知")
-                            
-                        reports.append({
-                            "time": dt,
-                            "symbol": symbol,
-                            "report": scenario_synthesis,
-                            "mtime": mtime
-                        })
-                    except Exception:
-                        pass
-                        
-                reports.sort(key=lambda x: x["mtime"], reverse=True)
-                return reports
-                
             history_reports = get_report_history()
             
             if history_reports:
@@ -352,9 +631,121 @@ if check_password():
                     # 顯示報告內容
                     st.write("### 歷史決策彙整報告")
                     st.text_area("報告原文", selected_report["report"], height=450, key="history_report_output")
+                    if selected_report.get("task_id"):
+                        st.write("### 各 Agent 結果（修改功能時可對照）")
+                        render_agent_reports(selected_report["task_id"], key_prefix="hist")
+                        st.write("### 該次分析流程")
+                        render_mermaid(
+                            TraceVisualizer(selected_report["task_id"]).generate_run_flowchart(),
+                            height=780,
+                        )
                     st.caption("免責聲明：本報告僅基於歷史客觀數據推演，請投資人維持獨立思考，自行承擔損益風險。")
             else:
                 st.info("目前尚無任何歷史報告紀錄。")
+
+        with tab3:
+            st.write("### 個股分析報告流程")
+            st.write(
+                "系統採三階段流水線：先統一收集資料，再由多個 Agent **平行盲測** "
+                "（彼此看不到對方報告），最後才由合成器與 LLM 做矛盾比對與情境推演。"
+            )
+            render_mermaid(TraceVisualizer.generate_pipeline_flowchart(), height=820)
+            st.write("---")
+            st.write("**階段說明**")
+            st.markdown(
+                """
+- **Phase 1 資料收集**：封裝價量、財報估值、三大法人、融資券、行事曆與 Shioaji 帳戶／庫存；並平行啟動 Grok Build CLI 與 Gemini CLI 蒐集未驗證新聞／公告，寫入 Shared Context。
+- **Phase 2 平行盲測**：基本面、技術面、法人籌碼、制度事件、資產配置、定價把關、風控煞車、執行紀律，以及行為風險（VWAP 乖離／量價背離／假跌破），各自只讀自己需要的欄位。
+- **Phase 3 決策合成**：匯整九份報告，交由 LLM 做多空矛盾與情境推演；程式再附上風暴比與分批操作提醒。風控煞車若否決，會置頂攔截說明。行為風險只當觀察標記，不會自動否決。
+                """.strip()
+            )
+
+        with tab4:
+            st.write("### 各 Agent 結果報告")
+            st.write(
+                "這裡可逐一檢視每次 pipeline 寫下的 trace：輸入欄位、客觀發現、訊號與完整 JSON。"
+                "改 Agent 規則時，請對照右側原始碼路徑與輸出結構。"
+            )
+            history_for_agents = get_report_history(require_llm=False)
+            if not history_for_agents:
+                st.info("尚無歷史任務。請先在「新增分析推演」跑一次。")
+            else:
+                default_tid = st.session_state.get("last_analysis_task_id", history_for_agents[0]["task_id"])
+                options = [f"[{r['time']}] {r['symbol']}  ({r['task_id'][:8]})" for r in history_for_agents]
+                default_idx = 0
+                for i, item in enumerate(history_for_agents):
+                    if item["task_id"] == default_tid:
+                        default_idx = i
+                        break
+                picked = st.selectbox("選擇任務", options, index=default_idx, key="agent_report_task")
+                picked_idx = options.index(picked)
+                picked_task = history_for_agents[picked_idx]
+                st.write(
+                    f"**標的**：`{picked_task['symbol']}`　"
+                    f"**時間**：{picked_task['time']}　"
+                    f"**task_id**：`{picked_task['task_id']}`"
+                )
+                render_agent_reports(picked_task["task_id"], key_prefix="browse")
+
+        with tab5:
+            st.write("### 股價行為風險提示")
+            st.write(
+                "沿用 stock_risk_alert 的規則：高追價（VWAP 乖離、高檔量縮、創新高波動急縮）"
+                "與低殺出（跌破支撐無量、假跌破、低檔盤旋）。資料來自既有日線 raw_history，不另呼叫分鐘線。"
+            )
+            last_tid = st.session_state.get("last_analysis_task_id")
+            last_sym = st.session_state.get("last_analysis_symbol", "2379.TW")
+            last_hist = st.session_state.get("last_price_history") or []
+            if not last_hist and last_tid:
+                last_hist = load_price_history_from_task(last_tid)
+                st.session_state["last_price_history"] = last_hist
+
+            source = st.radio(
+                "資料來源",
+                ["使用最近一次 Pipeline 日線", "從歷史任務載入", "只抓價量（不跑 LLM）"],
+                horizontal=True,
+                key="behavior_risk_source",
+            )
+
+            selected_symbol = last_sym
+            selected_history = last_hist
+            selected_vwap = float(st.session_state.get("last_vwap_threshold", 5.0))
+
+            if source == "從歷史任務載入":
+                history_for_risk = get_report_history(require_llm=False)
+                if not history_for_risk:
+                    st.info("尚無歷史任務。請先在「新增分析推演」跑一次，或改用只抓價量。")
+                    selected_history = []
+                else:
+                    options = [f"[{r['time']}] {r['symbol']}  ({r['task_id'][:8]})" for r in history_for_risk]
+                    picked = st.selectbox("選擇任務", options, key="behavior_risk_task")
+                    picked_idx = options.index(picked)
+                    picked_task = history_for_risk[picked_idx]
+                    selected_symbol = picked_task["symbol"]
+                    selected_history = load_price_history_from_task(picked_task["task_id"])
+            elif source == "只抓價量（不跑 LLM）":
+                fetch_symbol = st.text_input("股票代號 (例: 2379.TW)", value=last_sym or "2379.TW", key="behavior_only_symbol")
+                if st.button("抓取日線並標記風險", key="behavior_fetch_btn"):
+                    with st.spinner("正在擷取日線價量..."):
+                        from src.agents.ingestion import DataIngestionAgent
+                        ingest = DataIngestionAgent(symbol=fetch_symbol)
+                        try:
+                            price = ingest.fetch_price_volume_data()
+                            selected_history = price.get("raw_history") or []
+                            selected_symbol = fetch_symbol
+                            st.session_state["behavior_standalone_history"] = selected_history
+                            st.session_state["behavior_standalone_symbol"] = selected_symbol
+                        finally:
+                            ingest.close()
+                selected_history = st.session_state.get("behavior_standalone_history") or []
+                selected_symbol = st.session_state.get("behavior_standalone_symbol") or fetch_symbol
+
+            render_behavior_risk_panel(
+                selected_history,
+                selected_symbol,
+                key_prefix="tab5_risk",
+                default_vwap=selected_vwap,
+            )
 
     # 3. 投資日記
     elif page == "投資日記":

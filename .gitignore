@@ -21,6 +21,6 @@ venv.bak/
 *.swp
 *.code-workspace
 
-# Local Trace Logs
-trace/
+# Runtime task dumps only (do not ignore src/trace/ source)
+/trace/
 *.log

@@ -3,16 +3,39 @@
 本模組僅提供查詢類功能，不封裝任何委託下單 (Order) 相關 API。
 如需下單功能，須經過使用者另行且獨立的架構決策，不在本專案範圍內。
 """
+import os
 import shioaji as sj
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 
 class ShioajiQueryError(Exception):
     """Shioaji 查詢例外類別"""
     pass
 
-def login(api_key: str, secret_key: str) -> sj.Shioaji:
-    # 登入永豐金 Shioaji API
-    api = sj.Shioaji()
+
+def get_credentials() -> Tuple[str, str]:
+    """讀取 SHIOAJI_* 或 SJ_* 金鑰（兩種名稱皆可）。"""
+    api_key = (
+        os.environ.get("SHIOAJI_API_KEY")
+        or os.environ.get("SJ_API_KEY")
+        or ""
+    ).strip()
+    secret_key = (
+        os.environ.get("SHIOAJI_SECRET_KEY")
+        or os.environ.get("SJ_SECRET_KEY")
+        or ""
+    ).strip()
+    return api_key, secret_key
+
+
+def is_simulation() -> bool:
+    return os.environ.get("SJ_SIMULATION", "True").lower() in ("true", "1", "yes")
+
+
+def login(api_key: str, secret_key: str, simulation: Optional[bool] = None) -> sj.Shioaji:
+    # 帳戶查詢預設正式環境；模擬僅在呼叫端明確傳入時啟用
+    if simulation is None:
+        simulation = False
+    api = sj.Shioaji(simulation=simulation)
     api.login(api_key=api_key, secret_key=secret_key)
     return api
 
