@@ -48,7 +48,8 @@ discipline_agent:
   emotional_trigger_count: 3           # 情緒關鍵字出現筆數達此值視為「傾向偏高」
 
 event_agent:
-  margin_ratio_low: 140.0              # 融資維持率下限，落在區間視為「恐慌指標鈍化」
-  margin_ratio_high: 150.0             # 融資維持率上限
-  days_to_recall_alert: 10             # 距融券強制回補日少於此天數才提示
-  days_to_ex_div_alert: 30             # 距除權息日少於此天數才提示
+  margin_call_warning_pct: 130.0           # 追繳線
+  margin_ratio_bottom_signal_pct: 140.0    # 止穩打底參考值
+  margin_ratio_bottom_signal_band_pct: 5.0 # 140±5 視為打底區間
+  days_to_recall_alert: 10                 # 距融券強制回補日少於此天數才提示
+  days_to_ex_div_alert: 30                 # 距除權息日少於此天數才提示

@@ -216,8 +216,9 @@ RULE_FIELD_LABELS = {
     "ma20_overbought_dev_pct": "月線正乖離達此幅度視為高追價（可被使用者輸入覆蓋）",
     "emotional_lookback_entries": "檢視近期日記筆數",
     "emotional_trigger_count": "情緒關鍵字出現筆數達此值視為「傾向偏高」",
-    "margin_ratio_low": "融資維持率下限",
-    "margin_ratio_high": "融資維持率上限",
+    "margin_call_warning_pct": "融資維持率追繳線",
+    "margin_ratio_bottom_signal_pct": "融資維持率止穩打底參考值",
+    "margin_ratio_bottom_signal_band_pct": "止穩判斷帶寬（參考值加減此值）",
     "days_to_recall_alert": "距融券強制回補日少於此天數才提示",
     "days_to_ex_div_alert": "距除權息日少於此天數才提示",
 }

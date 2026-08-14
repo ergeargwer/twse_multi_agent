@@ -161,6 +161,26 @@ def test_all_phase2_agents_init():
     print("ok nine agents init")
 
 
+def test_event_margin_bands_and_usd():
+    from src.agents.event import EventCalendarAgent
+    agent = EventCalendarAgent()
+    call = agent.analyze({"calendar_events": {"margin_maintenance_ratio": 128.0}})
+    assert call["margin_ratio_signal"] == "追繳警戒"
+    bottom = agent.analyze({"calendar_events": {"margin_maintenance_ratio": 140.0}})
+    assert bottom["margin_ratio_signal"] == "恐慌指標鈍化"
+    quiet = agent.analyze({"calendar_events": {"margin_maintenance_ratio": 150.0}})
+    assert quiet["margin_ratio_signal"] == "無明顯訊號"
+    usd = agent.analyze({
+        "calendar_events": {},
+        "usd_index_20d_high": True,
+        "usd_index_latest": 100.2,
+        "usd_index_data_source": "Yahoo Finance DX-Y.NYB (ICE Dollar Index)",
+    })
+    assert usd["usd_index_signal"] == "外資撤離資金抽離警訊"
+    agent.close()
+    print("ok event margin usd")
+
+
 def test_persona_builds_same_constraints():
     persona = load_persona(force_reload=True)
     prompt = build_system_prompt(False, "")
@@ -182,5 +202,6 @@ if __name__ == "__main__":
     test_changing_rules_changes_judgment()
     test_all_phase2_agents_init()
     test_risk_veto_concentration_from_yaml()
+    test_event_margin_bands_and_usd()
     test_persona_builds_same_constraints()
     print("all rule/prompt config tests passed")

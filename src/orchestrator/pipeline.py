@@ -129,6 +129,7 @@ class OrchestratorPipeline:
             "institutional_flow": ingestion_agent.fetch_institutional_margin_data(),
             "fundamentals": ingestion_agent.fetch_fundamental_data(),
             "calendar_events": ingestion_agent.fetch_calendar_events(),
+            **ingestion_agent.fetch_usd_index_signal(),
             "account_balance": account_balance,
             "position_list": position_list,
             "journal_history": [e.to_dict() for e in self.journal_store.get_history(self.symbol)],
